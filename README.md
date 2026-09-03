@@ -6,11 +6,11 @@ RouterDrive is a simple program that you flash onto an ESP32S3 based board which
 
 ## Why did you create this?
 
-It started with a conversation on another thread about alternative ways to get files onto the Shaper Origin besides Shaper Hub. User Beau pointed out that there was a usbA port that you can plug a thumb drive into with svg files. This was cool but I'm lazy so I thought maybe there was a way to just upload over the air... Beau also pointed out that there was such a solution made for 3d printers. I decided to make a tool a little more tailored for the Origin!
+It started with a conversation on another thread about alternative ways to get files onto the Shaper Origin besides Shaper Hub. User Beau pointed out that there was a usbA port that you can plug a thumb drive into with svg files. This was cool but I'm lazy so I thought maybe there was a way to just upload over the air... Beau also pointed out that there was such <a href="https://github.com/Kabani-Tech/PrintDrop/tree/main">a solution made for 3d printers</a>. I decided to make a tool a little more tailored for the Origin!
 
 ## Bill of Materials:
 
-- XIAO SEED ESP32S3 (with wifi), it'll cost about $8 or more if you order it from Amazon.
+- <a href="https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html?srsltid=AfmBOoo863vUAdXXXBIIhyb8569hLNaHapZZGnotORkPbuJ4PjPwXCiY">XIAO SEED ESP32S3 (with wifi)</a>, it'll cost about $8 or more if you order it from Amazon.
 - USBA to USBc cable, I recommend something short like 6"
 - Basic knowledge uploading files through Arduino IDE less intimidating than it sounds
 - Little bit of 3M VHB Tape to stick it on your Shaper
@@ -28,7 +28,7 @@ If anyone up in the sky is listening it would be amazing if you could get usbA '
 
 So you've gotten all the parts together and are ready to get this thing installed - it's done in 6 painfree steps. 
 
-1. Setup Arduino IDE
+1. Setup <a href="https://www.arduino.cc/en/software/">Arduino IDE</a>
 2. Download the RouterDrive .zip file
 3. Connect your ESP32S3 to your computer + flash it with RouterDrive 
 4. Connect to your ESP32S3's wifi network + insert workshop wifi credentials
@@ -37,4 +37,9 @@ So you've gotten all the parts together and are ready to get this thing installe
 
 ## 1. Setup Arduino IDE
 
-This is by the far the most daunting step for folks who have never futzed with Arduino IDE before but I assure you we will get through this together. If you've already got this part done feel free to skip ahead.
+This is by the far the most daunting step for folks who have never futzed with Arduino IDE before but I assure you we will get through this together. If you've already got this part done feel free to skip ahead. 
+
+Arduino IDE is how we will communicate with the ESP32S3 board and install the RouterDriver software. 
+
+1. Begin by
+
