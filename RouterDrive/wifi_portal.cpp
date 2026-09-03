@@ -48,9 +48,12 @@ static void startAP() {
   }
 }
 
-static bool connectSTA(const String &ssid, const String &pass) {
+static bool connectSTA(const String &ssid, const String &pass, bool keepAPAlive = false) {
   Serial.printf("[wifi] joining \"%s\"...\n", ssid.c_str());
-  WiFi.mode(WIFI_STA);
+  // keepAPAlive is set for the periodic retry in wifiPortalLoop(), where
+  // we're already running the setup AP and must not drop it just to test a
+  // saved network - see the comment above that call for why.
+  WiFi.mode(keepAPAlive ? WIFI_AP_STA : WIFI_STA);
   WiFi.setHostname(HOSTNAME);
   WiFi.begin(ssid.c_str(), pass.c_str());
 
@@ -63,6 +66,11 @@ static bool connectSTA(const String &ssid, const String &pass) {
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[wifi] connect failed / timed out");
+    if (keepAPAlive) {
+      // Drop back to a plain AP rather than leaving the radio sitting in
+      // AP_STA with a dead, disconnected STA side for no reason.
+      WiFi.mode(WIFI_AP);
+    }
     return false;
   }
 
@@ -73,6 +81,13 @@ static bool connectSTA(const String &ssid, const String &pass) {
   // (FFat's File::getLastWrite(), used for the web UI's "Uploaded" column)
   // won't be meaningful yet. See config.h for the timezone constants.
   configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
+
+  if (keepAPAlive) {
+    // A retry from AP mode just succeeded - we're switching over to STA for
+    // good, so drop the setup AP now that there's a working connection.
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+  }
 
   if (MDNS.begin(HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
@@ -123,7 +138,11 @@ void wifiPortalLoop() {
     if (haveSavedCreds && (millis() - lastRetryMs) > RETRY_INTERVAL_MS) {
       lastRetryMs = millis();
       String ssid, pass;
-      if (loadCredentials(ssid, pass) && connectSTA(ssid, pass)) {
+      // true = keep the setup AP broadcasting during this attempt. Without
+      // it, a bad/out-of-range saved network would silently tear down
+      // "RouterDrive-Setup" every retry and never bring it back, leaving no
+      // way back into the portal short of a reflash or a BOOT-button reset.
+      if (loadCredentials(ssid, pass) && connectSTA(ssid, pass, true)) {
         dnsServer.stop();
         ledApplyIdleState(); // was blinking for AP/setup mode - reflect the new STA state
       }

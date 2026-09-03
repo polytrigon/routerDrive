@@ -252,6 +252,16 @@ Two ways:
   on / pressing RESET, keep holding for ~3 seconds. Saved credentials are
   wiped and it comes up in setup-AP mode again.
 
+If you never even get that far - say you submitted the wrong password on
+the setup page - `RouterDrive-Setup` now stays up the whole time RouterDrive
+is retrying a saved network in the background, so you should always be able
+to rejoin it and try again (or hit "Forget Wi-Fi" if that's showing) without
+needing the BOOT-button reset above. (Earlier builds would drop the setup AP
+for good after the first failed retry, since testing a saved network briefly
+switched the radio out of AP mode and nothing brought the AP back up when
+that attempt failed - fixed by keeping the AP and STA radios up
+simultaneously during retries instead of switching between them.)
+
 ## Connection status
 
 The top of the web UI shows two live indicators:

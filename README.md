@@ -95,7 +95,7 @@ That's Arduino IDE fully set up - you won't need to repeat any of this the next 
 
 1. On first boot (and any time it doesn't have saved Wi-Fi credentials), RouterDrive broadcasts its own hotspot named **RouterDrive-Setup** (password: `routerdrive`). Join it from your phone or laptop like any other Wi-Fi network.
 2. Your device may pop up a "sign in to network" prompt on its own - if it does, that's the page you want. If it doesn't, just open `http://192.168.4.1/` in a browser yourself.
-3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does.
+3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does. If it connects successfully, the yellow status LED on the RouterDrive turns solid.
 4. Once it's connected, you'll find it from then on at `routerdrive.local` in any browser on that same network - no more setup hotspot needed unless you reset it or move it to a different Wi-Fi network later.
 
    *(Don't want to give it your home Wi-Fi at all? You can skip this step entirely and use RouterDrive straight off its own hotspot instead - there's a note for how on the setup page itself.)*
@@ -116,8 +116,8 @@ This is the step you'll actually repeat every time you want new files on the Ori
 1. From any device on the same Wi-Fi network, visit `routerdrive.local` in a browser.
 2. Under "Upload files," select one or more DXF and/or SVG files (mixing both in one go is fine) - DXFs convert to SVG automatically, SVGs just upload as-is.
 3. If you selected any DXFs, pick mm or inches from the units dropdown - it only affects those, SVGs ignore it.
-4. Click **Convert & upload**. You'll see a status line tracking progress, and each file that just landed gets a small green checkmark next to it in the file list.
-5. Click **Restart RouterDrive**. In practice, the Origin's import list usually needs this nudge to actually notice a new file - it takes a few seconds and briefly drops Wi-Fi, then reconnects on its own.
+4. Click **Convert & upload**. You'll see a status line tracking progress; once it finishes the page reloads on its own, and each file that just landed shows a small green checkmark next to it in the file list below.
+5. Click **Restart RouterDrive**. In practice, the Origin's import list usually needs this nudge to actually notice a new file - it takes a few seconds and briefly drops Wi-Fi, then reconnects on its own. While it's restarting, the yellow status LED goes from solid to rapidly blinking, then off, then back to solid after a few seconds - a handy visual cue that it's back up and ready.
 6. Your new file(s) should now show up in the Origin's "+ Import" folder. If they don't, a physical unplug/replug of the USB cable will always work as a last resort, same as with any ordinary flash drive.
 
 That's it - you're up and running!
