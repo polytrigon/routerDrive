@@ -4,8 +4,7 @@
 
 I've created a gadget to help the community with uploading files to their Shaper. It costs very little in parts (less than $15). This project will always be open source and free.
 
-![RouterDrive plugged into a Shaper Origin](docs/routerdrive-on-origin.jpg)
-<!-- swap in your actual photo - it's the purple thing plugged into the USB-A port -->
+![RouterDrive plugged into a Shaper Origin](assets/purpleThing.jpeg)
 
 ## What is it?
 
@@ -26,6 +25,10 @@ It started with a conversation on another thread about alternative ways to get f
 ## How's it work?
 
 Once RouterDrive is connected to your Wi-Fi network and plugged into the Shaper Origin's USB port, visit `routerdrive.local` in a browser and you'll see the interface below. From there you can upload SVG and DXF files - DXFs convert to SVG automatically. Hit "Restart RouterDrive," and once it reboots (a few seconds), your files show up on the Origin in the "+ Import" folder.
+
+![The RouterDrive web interface](assets/browserInterface.png)
+
+[Watch it in action](assets/filesUploading.MOV) - a quick look at uploading files and seeing them land on the Origin.
 
 ## Quick note to the Shaper devs
 
@@ -54,6 +57,8 @@ Arduino IDE is how we'll talk to the ESP32-S3 board and install the RouterDrive 
    https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
    ```
    This is what tells Arduino IDE how to talk to ESP32-family boards, XIAO included - none of that support ships in Arduino IDE by default.
+
+   ![Additional boards manager URL in Arduino IDE Preferences](assets/arduinoAddBoards.png)
 3. Go to **Tools > Board > Boards Manager**, search for "esp32," and install the one published by **Espressif Systems**. This one takes a few minutes - it's downloading the whole toolchain, not just a driver.
 4. Plug your XIAO ESP32S3 into your computer with a USB-C cable.
 5. Go to **Tools > Board**, find the **esp32** section, and select **XIAO_ESP32S3**.
@@ -70,12 +75,14 @@ Arduino IDE is how we'll talk to the ESP32-S3 board and install the RouterDrive 
 
    Don't worry about memorizing what each of these does - just match the table. ("TinyUF2" in that partition scheme's name is just what Arduino calls that particular flash layout; picking it doesn't change how you upload code or require any extra bootloader step.)
 
+   ![Tools menu with the required settings visible](assets/arduinoSettings.png)
+
 That's Arduino IDE fully set up - you won't need to repeat any of this the next time you want to reflash RouterDrive, just steps 2 and 3 below.
 
 ### 2. Download the RouterDrive `.zip` file
 
-1. On this repo's main page, click the green **Code** button, then **Download ZIP** (or `git clone` it, if you're comfortable with that). Unzip it wherever's convenient.
-2. Inside, find the `RouterDrive` folder and make sure `RouterDrive.ino` sits directly inside it (not nested another folder deeper). Arduino IDE is picky about this - the sketch folder name has to match the `.ino` file name exactly, or it won't open properly.
+1. Download [`RouterDrive.zip`](RouterDrive.zip) from the top of this repo and unzip it wherever's convenient - that's just the sketch folder, ready to go. (Rather grab the whole repo instead? Click the green **Code** button → **Download ZIP**, or `git clone` it - the sketch lives in the `RouterDrive` folder either way.)
+2. However you got it, make sure `RouterDrive.ino` sits directly inside a folder named `RouterDrive` (not nested another folder deeper). Arduino IDE is picky about this - the sketch folder name has to match the `.ino` file name exactly, or it won't open properly.
 3. Double-click `RouterDrive.ino` to open it in Arduino IDE. You'll see a row of tabs across the top (`config.h`, `storage.cpp`, `web_server.cpp`, etc.) - that's normal, they're all part of the same sketch and load together automatically.
 
 ### 3. Connect your ESP32-S3 to your computer and flash it
@@ -99,9 +106,8 @@ Before it ever touches the Origin, it's worth a quick check on your own computer
 
 Once that all checks out:
 
-1. Plug RouterDrive into the Shaper Origin's USB-A port using your USB-A-to-USB-C cable.
-2. It can be powered by the Origin's own USB port, or by a separate USB power source if you'd rather - either works.
-3. On the Origin, confirm it shows up as a drive and that you can open an SVG you uploaded over Wi-Fi.
+1. Plug RouterDrive into the Shaper Origin's USB-A port using your USB-A-to-USB-C cable. That cable is both the power and data connection, so RouterDrive needs to stay plugged in here (not powered separately) to work.
+2. On the Origin, confirm it shows up as a drive and that you can open an SVG you uploaded over Wi-Fi.
 
 ### 6. Use the browser interface at `routerdrive.local` to upload files
 
