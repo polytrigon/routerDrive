@@ -19,7 +19,8 @@ It started with a conversation on another thread about alternative ways to get f
 - [Seeed XIAO ESP32S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html) - the WiFi model. Seeed's XIAO line comes in several flavors (not all of them have WiFi), so double check you're getting this one. About $8 direct from Seeed, a bit more on Amazon.
 - USB-A to USB-C cable - something short is nice, 6" or so.
 - Basic comfort uploading a sketch through Arduino IDE - less intimidating than it sounds, we'll walk through it below.
-- A small strip of 3M VHB tape, to stick it to your Shaper.
+- Optional: a 3D-printed case (that's what's shown in the photo above) - print the STLs yourself from the [`3D Prints`](3D%20Prints) folder in this repo, no special settings needed.
+- A small strip of 3M VHB tape, to stick the case to the side of your Shaper.
 - A computer (of course!)
 
 ## How's it work?
