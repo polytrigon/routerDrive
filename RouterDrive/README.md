@@ -248,8 +248,11 @@ page the footer shows up on, including the AP-mode setup page.
 Two ways:
 - In the web UI, "Forget Wi-Fi" button (under the Wi-Fi section once
   connected).
-- Physically: hold the **BOOT** button on the XIAO down while powering it
-  on / pressing RESET, keep holding for ~3 seconds. Saved credentials are
+- Physically: the XIAO has two small buttons, silkscreened **B** (BOOT) and
+  **R** (RESET) - hold down **B**, then while still holding it tap **R** to
+  reset the board, and keep holding **B** for about 3 seconds after that.
+  **R** alone just restarts it and doesn't touch saved credentials - **B**
+  is the one that matters here. Once you let go, saved credentials are
   wiped and it comes up in setup-AP mode again.
 
 If you never even get that far - say you submitted the wrong password on
