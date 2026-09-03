@@ -1,0 +1,202 @@
+/* RouterDrive - shared stylesheet, served at GET /style.css.
+   Kept as its own file (like dxf2svg.js) so styling lives in one place
+   instead of being duplicated/hand-matched across every button and
+   section. If you edit this, regenerate style_css.h to match - see the
+   README's "Sketch layout" section. */
+
+/* display:flex + min-height:100vh so <footer> (margin-top:auto, below) can
+   anchor to the bottom of the page even when the rest of the content is
+   short - on a normal/tall page this has no visible effect, footer just
+   follows the content as usual. Everything except <footer> is wrapped in
+   a <div class='page'> (see web_server.cpp) so body only has two direct
+   children: flex items default to align-items:stretch, which would
+   otherwise stretch every direct child - including inline-block elements
+   like <button> that normally shrink-wrap their text - to the full page
+   width. Wrapping the content keeps that stretch confined to .page and
+   <footer> (both already full-width block elements, so no visible
+   change), instead of blowing up buttons that aren't inside a <form>. */
+body {
+  font-family: sans-serif;
+  max-width: 640px;
+  margin: 2em auto;
+  padding: 0 1em;
+  color: #222;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+h1 {
+  margin-bottom: 0;
+}
+
+h2 {
+  margin-top: 2.5em;
+  margin-bottom: .5em;
+}
+
+.sub {
+  color: #666;
+  margin-top: .2em;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+td {
+  padding: .4em .3em;
+  border-bottom: 1px solid #ddd;
+}
+
+th {
+  text-align: left;
+  padding: .4em .3em;
+  border-bottom: 2px solid #999;
+}
+
+input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: .4em;
+}
+
+/* One consistent look for every button on the page, regardless of
+   whether it's a form's type='submit' or a plain type='button' handled
+   by JS - browsers style those two differently on their own otherwise. */
+button {
+  padding: .5em 1em;
+  cursor: pointer;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 1em;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+button:active {
+  background: #1e40af;
+}
+
+/* Larger, more touch-friendly sizing for the Upload section's file picker
+   and units dropdown - their native browser-default sizing reads noticeably
+   smaller/lower-key than the button next to them. Also gives the file
+   input's native "Choose file" control the same look as the page's other
+   buttons instead of the browser's plain default. */
+select,
+input[type='file'] {
+  font-size: 1.05em;
+  padding: .6em;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+input[type='file']::file-selector-button {
+  font-size: 1em;
+  padding: .5em 1em;
+  margin-right: .8em;
+  border: none;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+input[type='file']::file-selector-button:hover {
+  background: #1d4ed8;
+}
+
+/* Explicit full-width treatment for the page's two or three primary
+   call-to-action controls (Convert & upload, its units dropdown, Restart
+   device) - NOT the default for every button/select (Delete selected,
+   Search, the footer's link-btn stay their natural shrink-to-fit size).
+   Used to happen by accident everywhere via a body{display:flex} quirk;
+   now it's applied deliberately just where it's wanted. */
+.full-width {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.status {
+  margin: .4em 0;
+}
+
+.dot {
+  display: inline-block;
+  width: .7em;
+  height: .7em;
+  border-radius: 50%;
+  margin-right: .3em;
+}
+
+.dot-ok {
+  background: #0a0;
+}
+
+.dot-bad {
+  background: #b00;
+}
+
+.search {
+  margin: .6em 0;
+}
+
+.search input {
+  width: auto;
+  display: inline-block;
+}
+
+.pager {
+  margin: .5em 0;
+}
+
+.pager a {
+  margin: 0 .4em;
+}
+
+/* Makes a <button> look like a plain muted text link instead of the
+   page's normal blue buttons - for low-key, easy-to-ignore controls like
+   the status LED's footer toggle. */
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #999;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.link-btn:hover,
+.link-btn:active {
+  background: none;
+  color: #666;
+}
+
+footer {
+  margin-top: auto;
+  padding-top: 2em;
+  font-size: .8em;
+  color: #999;
+}
+
+footer a {
+  color: #999;
+}
+
+footer p {
+  margin: .3em 0 0;
+}
+
+footer p:first-child {
+  margin-top: 0;
+}

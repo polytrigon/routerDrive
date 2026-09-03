@@ -1,0 +1,17 @@
+# NOT CURRENTLY USED.
+#
+# The Seeed XIAO ESP32S3 board package doesn't offer a "Custom" partition
+# scheme in Arduino IDE, so this file is never read - it's kept here only
+# as a reference / in case a future core version adds Custom support.
+#
+# What the sketch actually uses instead:
+#   Tools > Partition Scheme > "TinyUF2 8MB No OTA (4MB APP/3.7MB FFAT)"
+# That built-in scheme already ships a data/fat partition named "ffat",
+# matching what FFat.h and storage.cpp both look for by default.
+#
+# ---- reference layout below (unused) ----
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+factory,    app,  factory,  0x10000,  0x300000,
+ffat,       data, fat,      0x310000, 0x4F0000,
