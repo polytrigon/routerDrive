@@ -242,7 +242,8 @@ struct FileEntry {
 // upload time (so the attribute always showed up almost immediately).
 // It quietly broke once per-line editing shipped: a real-hardware test
 // edited two shapes deep into a multi-KB file and the file list showed
-// "-"/"-" for both cut type AND bit size, even though the shapes'
+// "-" for the cut type (a Bit size column existed then too, and showed
+// the same), even though the shapes'
 // attributes were saved correctly and the editor itself displayed them
 // fine on reopen (it reads the whole file via GET /svg, no size cap) -
 // their attributes simply landed past the old 4KB window. Fixed below by
@@ -1033,7 +1034,7 @@ static String renderPage() {
   html += "<h2>Upload files</h2>";
   html += "<p class='sub'>Select DXF and/or SVG files, mixed together if you like. DXFs are automatically "
           "converted to the SVG format the Origin requires (handles most shapes, including text). Optionally "
-          "pick a folder to upload into, and blanket-assign a Shaper cut type, depth, and tool diameter to "
+          "pick a folder to upload into, and blanket-assign a Shaper cut type and depth to "
           "each file below.</p>";
   html += "<input type='file' id='uploadFile' accept='.dxf,.svg' multiple>";
   html += "<br><br>";
@@ -1107,7 +1108,7 @@ static String renderPage() {
   // button in the file list above (see cutTypeCell/openCutEditorFromBtn).
   // Fetches the real file's SVG from the new /svg route, renders it, and
   // lets the user click individual paths to give them their own cut
-  // type/depth/tool diameter instead of the whole-file value the Upload
+  // type and depth instead of the whole-file value the Upload
   // section's own controls apply. Static markup - openCutEditor() fills
   // in the title and injects the fetched SVG at open time.
   html += "<div id='cutEditorOverlay' class='modal-overlay' style='display:none'>"
