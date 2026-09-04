@@ -565,6 +565,30 @@ the same part twice with two different anchor positions and looking at
 what the machine did. The reasoning had been perfectly plausible and
 perfectly wrong, which is now the fourth time on this project.
 
+**The Upload section's Default is a Center anchor**, not "leave the file
+alone" - with one exception that matters: a file that already carries its
+own anchor is left exactly as it is, and in that case the upload isn't
+rewritten at all, so those bytes reach the device unchanged. There is
+nowhere on the upload form to warn about replacing someone's anchor, so
+it doesn't.
+
+The consequence worth knowing is that a file with no anchor now gets one,
+and there is no longer a "remove" option - Center is treated as the
+neutral choice. That is very nearly true but not exactly: a Center anchor
+still pins orientation, where no anchor at all leaves the Origin's own
+nine points to do the whole job. If a file ever needs to carry no anchor,
+that has to come back.
+
+**In the editor the dropdown reports state, not intent.** It shows what
+the file currently has - a standard position read back from the
+geometry, or **Custom Anchor** for a triangle someone placed themselves.
+A file only reads as a standard position if the vertex is on that corner
+AND the legs point the way we draw them, so a hand-made anchor that
+happens to sit on a corner still reads as custom and still warns before
+being replaced. Nothing is written into the file to track this; there is
+no Shaper field for it, and inventing one would put RouterDrive-specific
+junk in everybody's SVG.
+
 **Anchors are protected on both write paths.** Placing a cut type - by
 blanket upload or per-line edit - skips any red-filled shape. Without
 that, uploading an Affinity file that already had an anchor while also

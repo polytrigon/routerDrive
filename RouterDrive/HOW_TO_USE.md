@@ -148,19 +148,22 @@ the machine and isn't part of the file at all.
 
 ## Setting an anchor
 
-An **anchor** is the point the Origin lines your design up from. Normally
-you just pick one of the nine anchor points on the tool itself - corners,
-edges, centre - and nothing about that lives in the file.
+An **anchor** is the point the Origin lines your design up from. There's
+an **Anchor** dropdown in the Upload section and another in the cut
+editor, offering the four corners and the centre. RouterDrive draws
+Shaper's red anchor triangle at whichever you pick. The tool's own nine
+anchor buttons still work alongside it - you can switch between them on
+the machine.
 
-If you'd rather the file carry its own, there's an **Anchor** dropdown in
-the Upload section and another in the cut editor. Leave it on **Default**
-and nothing changes. Pick a position and RouterDrive draws Shaper's red
-anchor triangle at that corner of your design. The tool's own anchor
-buttons still work; you can switch between them on the machine.
+**Uploads get a Center anchor by default.** If the file already has an
+anchor you drew yourself, that one is kept and the file is passed through
+untouched - the upload form won't quietly replace your work.
 
-A file can only have one anchor, so picking a position replaces whatever
-was there. If the file already had one you drew yourself, you'll be asked
-before it's replaced, since that throws away where you put it.
+In the cut editor the dropdown shows what the file *currently* has, so
+"Anchor: Top right" means it already is. A file with a hand-drawn anchor
+reads **Anchor: Custom Anchor**. Moving between standard positions just
+happens; replacing a hand-drawn one asks first, since that throws away
+where you put it.
 
 This has been tested on a real Origin. An earlier version placed the
 triangle at a different angle depending on which corner you picked, and
@@ -174,8 +177,8 @@ you expected, that's the thing to report.
 You don't have to use RouterDrive's editor at all. Origin identifies cut
 types by color, so a file you've already colored correctly in Affinity,
 Illustrator, Inkscape or anything else works as-is - just upload it with
-Cut type left on "Default" and RouterDrive passes it through untouched,
-byte for byte. Nothing overwrites what you did.
+Cut type left on "Default". If your file has its own anchor, it's passed
+through untouched, byte for byte, and nothing overwrites what you did.
 
 RouterDrive reads those colors too, so the file list shows the real cut
 types for those files the same way it does for its own - **Pocket**,

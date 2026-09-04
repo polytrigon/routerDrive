@@ -62,6 +62,15 @@ th {
   border-bottom: 2px solid #999;
 }
 
+/* Separates the cut-editor panel's per-selection controls from the
+   file-level anchor control below them. A hairline rather than a colour
+   change or a dimmed block: the anchor is not secondary or inactive, it
+   just answers a different question than the controls above it. */
+.panel-divider {
+  border-top: 1px solid #ddd;
+  margin: 1em 0 .9em;
+}
+
 /* File list column widths. Size, Cut type and Uploaded all get the same
    fixed width so they read as an evenly spaced block sitting at the right
    of the table, and Name - the longest, most variable, most worth-reading
