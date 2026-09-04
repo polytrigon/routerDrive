@@ -219,11 +219,10 @@ struct FileEntry {
   size_t size;
   time_t mtime;
   String cutType; // raw shaper:cutType value, e.g. "outside" - see readShaperInfo()
-  String toolDia;  // raw shaper:toolDia value, e.g. "0.25 in"
 };
 
 // Every shape this app writes shaper:* attributes onto used to carry the
-// same cutType/toolDia, back when applyShaperMetadata() only ever applied
+// same cutType, back when applyShaperMetadata() only ever applied
 // one chosen type to the whole file - but a file can now legitimately
 // carry different values per shape: either edited per-line through the
 // file list's cut editor, or uploaded straight from a real Origin export
@@ -253,7 +252,7 @@ struct FileEntry {
 // old worst case (one ~2KB buffer instead of up to 4KB).
 static const size_t SHAPER_SCAN_CHUNK = 2048;
 // Every '<attr>="<value>"' this app ever writes is well under this many
-// bytes (the longest, shaper:cutOffset="0.125 in", is ~27) - carrying
+// bytes (the longest, shaper:cutDepth="0.125 in", is ~26) - carrying
 // this many bytes from the end of one chunk into the front of the next
 // guarantees no occurrence is ever split across a chunk boundary, so
 // each chunk can still be scanned independently with scanAttrMixed().
@@ -467,20 +466,17 @@ static int countBits(uint8_t v) {
 // Streams an already-open file handle (left at its current read position
 // - call this before any other read on the same handle, and before the
 // handle is closed) through a small fixed-size buffer, pulling out
-// shaper:cutType/shaper:toolDia if present anywhere in it, and otherwise
+// shaper:cutType if present anywhere in it, and otherwise
 // falling back to reading the cut types straight out of the file's colors
 // (see the color scanner above). Only a file with neither - no shaper:*
 // attributes AND nothing but plain un-encoded outlines - comes back
 // blank, which the file list shows as "Unset". cutType comes back as the
 // sentinel raw value "mixed" (see cutTypeLabel()) when more than one
-// distinct cut type is present; toolDia comes back as the literal display
-// string "Mixed" directly, since (unlike cutType) it's shown as-is with
-// no separate label-mapping step.
-static void readShaperInfo(File &f, String &cutType, String &toolDia) {
+// distinct cut type is present.
+static void readShaperInfo(File &f, String &cutType) {
   cutType = "";
-  toolDia = "";
   if (f.size() == 0) return;
-  bool cutTypeMixed = false, toolDiaMixed = false;
+  bool cutTypeMixed = false;
   uint8_t colorHits = 0;
   char *buf = new char[SHAPER_SCAN_CHUNK + 1];
   String overlapTail = "";
@@ -492,7 +488,6 @@ static void readShaperInfo(File &f, String &cutType, String &toolDia) {
     totalRead += n;
     String chunk = overlapTail + String(buf);
     scanChunkForAttr(chunk, "shaper:cutType", cutType, cutTypeMixed);
-    scanChunkForAttr(chunk, "shaper:toolDia", toolDia, toolDiaMixed);
     scanChunkColors(chunk, colorHits);
     // No early break on "both mixed" any more: the color scan has to see
     // the whole file to be able to report a color-encoded file correctly,
@@ -502,7 +497,6 @@ static void readShaperInfo(File &f, String &cutType, String &toolDia) {
   }
   delete[] buf;
   if (cutTypeMixed) cutType = "mixed";
-  if (toolDiaMixed) toolDia = "Mixed";
 
   // shaper:cutType, where present, is an explicit statement of intent and
   // wins outright. Only fall back to colors for a file that carries none
@@ -611,7 +605,7 @@ static String renderFilesSection() {
           e.name = basenameOf(String(f.name()));
           e.size = f.size();
           e.mtime = f.getLastWrite();
-          readShaperInfo(f, e.cutType, e.toolDia);
+          readShaperInfo(f, e.cutType);
           entries.push_back(e);
         }
         f.close();
@@ -739,9 +733,9 @@ static String renderFilesSection() {
   if (viewFolder.length() > 0) {
     html += "<input type='hidden' name='dir' value='" + htmlEscape(viewFolder) + "'>";
   }
-  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th><th>Cut type</th><th>Bit size</th></tr>";
+  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th><th>Cut type</th></tr>";
   if (filteredCount == 0) {
-    html += String("<tr><td colspan=6><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
+    html += String("<tr><td colspan=5><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
   } else {
     int startIdx = (page - 1) * FILES_PER_PAGE;
     int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
@@ -752,11 +746,10 @@ static String renderFilesSection() {
       html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
       html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
               "<td><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
-              "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td>"
-              "<td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : String("Unset")) + "</td></tr>";
+              "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td></tr>";
     }
   }
-  html += "<tr><td colspan=6 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
+  html += "<tr><td colspan=5 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
   html += "</table>";
   // A move destination exists whenever there's somewhere other than the
   // currently-viewed folder to put files: always true once you're inside
@@ -1039,7 +1032,7 @@ static String renderPage() {
   html += "<option value='__new__'>+ New folder...</option>";
   html += "</select>";
   html += "<br><br>";
-  html += "<select id='cutType' class='full-width' onchange='toggleToolDiaRow()'>"
+  html += "<select id='cutType' class='full-width'>"
           "<option value='' selected>Cut type: unset</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
@@ -1048,28 +1041,6 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>";
   html += "<br><br>";
-  html += "<div id='toolDiaWrap' style='display:none'>"
-          "<select id='toolDiaPreset' class='full-width' onchange='handleToolDiaPresetChange()'>"
-          "<option value='' selected>Tool diameter: choose one (required)</option>"
-          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
-          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
-          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
-          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
-          "<option value='3|mm'>Tool diameter: 3 mm</option>"
-          "<option value='6|mm'>Tool diameter: 6 mm</option>"
-          "<option value='8|mm'>Tool diameter: 8 mm</option>"
-          "<option value='10|mm'>Tool diameter: 10 mm</option>"
-          "<option value='__custom__'>Tool diameter: Custom...</option>"
-          "</select>"
-          "<br><br>"
-          "<div id='toolDiaCustomWrap' style='display:none'>"
-          "<div class='depth-row'>"
-          "<input type='number' id='toolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
-          "<select id='toolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
-          "</div>"
-          "<br><br>"
-          "</div>"
-          "</div>";
   html += "<div class='depth-row'>"
           "<input type='number' id='cutDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
           "<select id='cutDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
@@ -1146,7 +1117,7 @@ static String renderPage() {
           "</div>" // .cut-editor-viewer
           "<div class='cut-editor-panel'>"
           "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
-          "<select id='editCutType' class='full-width' onchange='toggleEditToolDiaWrap()'>"
+          "<select id='editCutType' class='full-width'>"
           "<option value='' selected>Cut type: choose one</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
@@ -1155,28 +1126,6 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>"
           "<br><br>"
-          "<div id='editToolDiaWrap' style='display:none'>"
-          "<select id='editToolDiaPreset' class='full-width' onchange='handleEditToolDiaPresetChange()'>"
-          "<option value='' selected>Tool diameter: choose one (required)</option>"
-          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
-          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
-          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
-          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
-          "<option value='3|mm'>Tool diameter: 3 mm</option>"
-          "<option value='6|mm'>Tool diameter: 6 mm</option>"
-          "<option value='8|mm'>Tool diameter: 8 mm</option>"
-          "<option value='10|mm'>Tool diameter: 10 mm</option>"
-          "<option value='__custom__'>Tool diameter: Custom...</option>"
-          "</select>"
-          "<br><br>"
-          "<div id='editToolDiaCustomWrap' style='display:none'>"
-          "<div class='depth-row'>"
-          "<input type='number' id='editToolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
-          "<select id='editToolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
-          "</div>"
-          "<br><br>"
-          "</div>"
-          "</div>"
           "<div class='depth-row'>"
           "<input type='number' id='editDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
           "<select id='editDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
@@ -1384,15 +1333,6 @@ static String renderPage() {
           "}"
           "sel.dataset.prev = sel.value;"
           "}"
-          "function toggleToolDiaRow() {"
-          "var ct = document.getElementById('cutType').value;"
-          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
-          "document.getElementById('toolDiaWrap').style.display = needsOffset ? '' : 'none';"
-          "}"
-          "function handleToolDiaPresetChange() {"
-          "var isCustom = document.getElementById('toolDiaPreset').value === '__custom__';"
-          "document.getElementById('toolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
-          "}"
           // -----------------------------------------------------------
           // THE thing that actually makes the Origin honor a cut type.
           //
@@ -1445,7 +1385,20 @@ static String renderPage() {
           "el.setAttribute('fill', c.fill);"
           "el.setAttribute('stroke', c.stroke);"
           "}"
-          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, toolDiaVal, toolDiaUnit) {"
+          // No tool diameter here any more. Origin takes the bit size from
+          // what you tell it at the machine - the only thing that knows
+          // what's actually in the collet - and testing showed a file's
+          // shaper:toolDia never moved that setting, across many uploads
+          // where the file said 3.175mm and the machine stayed on 6.35mm.
+          // Shaper's own exports write it onto On Line paths too, where
+          // there is no offset to compute and it cannot mean anything,
+          // which reads as "the bit this design was drawn for" rather than
+          // an instruction. So it was a required field that changed
+          // nothing, and shaper:cutOffset alongside it was always "0in".
+          // shaper:cutDepth stays - that one Shaper documents as a real
+          // override, and it's a different thing that merely shares the
+          // namespace.
+          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit) {"
           "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
           "if (doc.querySelector('parsererror')) { throw new Error('Could not parse SVG'); }"
           "var svgEl = doc.documentElement;"
@@ -1456,11 +1409,6 @@ static String renderPage() {
           "if (depthVal !== '' && depthVal !== null && !isNaN(parseFloat(depthVal))) {"
           "depthAttr = parseFloat(depthVal) + depthUnit;"
           "}"
-          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
-          "var toolDiaAttr = null;"
-          "if (needsOffset && toolDiaVal !== '' && toolDiaVal !== null && toolDiaVal !== undefined && !isNaN(parseFloat(toolDiaVal))) {"
-          "toolDiaAttr = parseFloat(toolDiaVal) + toolDiaUnit;"
-          "}"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) {"
           "if (cutType) {"
@@ -1468,10 +1416,6 @@ static String renderPage() {
           "applyShaperCutColors(shapes[i], cutType);"
           "}"
           "if (depthAttr) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutDepth', depthAttr);"
-          "if (toolDiaAttr) {"
-          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
-          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
-          "}"
           "}"
           "return new XMLSerializer().serializeToString(doc);"
           "}"
@@ -1502,7 +1446,6 @@ static String renderPage() {
           "document.getElementById('cutEditorSvgWrap').innerHTML = '<p class=\"sub\">Loading...</p>';"
           "document.getElementById('cutEditorStatus').textContent = '';"
           "document.getElementById('editCutType').value = '';"
-          "toggleEditToolDiaWrap();"
           "updateSelectionSummary();"
           "document.getElementById('cutEditorOverlay').style.display = 'flex';"
           "var url = '/svg?name=' + encodeURIComponent(name) + (folder ? '&dir=' + encodeURIComponent(folder) : '');"
@@ -1571,17 +1514,12 @@ static String renderPage() {
           "function cutEditorCutTypeOf(el) {"
           "return el.getAttributeNS(EDITOR_SHAPER_NS, 'cutType') || '';"
           "}"
-          // Splits a written shaper:cutDepth/toolDia value like '0.125in'
-          // into its numeric and unit parts. Written WITHOUT a space
-          // between them (matching Shaper Studio's own export format,
-          // e.g. shaper:toolDia="0.125in" - a real-hardware comparison
-          // against a Shaper Studio export found this app had been
-          // writing "0.125 in" WITH a space instead, which is likely why
-          // saved cut types weren't taking effect on the Origin at all).
-          // Still tolerates an optional space so a file saved by an
-          // older build of this app (before this fix) still reads back
-          // correctly instead of silently losing its depth/tool diameter
-          // display.
+          // Splits a written shaper:cutDepth value like '9mm' into its
+          // numeric and unit parts. Written without a space between them,
+          // matching the format Shaper's own documented cut depth
+          // encoding uses. Still tolerates an optional space, so a file
+          // saved by an older build of this app - which wrote "9 mm" -
+          // reads back correctly instead of silently losing its depth.
           "function parseValueUnit(str) {"
           "var m = /^(-?[0-9.]+)\\s*([a-zA-Z]*)$/.exec(str || '');"
           "return m ? { val: m[1], unit: m[2] } : { val: '', unit: '' };"
@@ -1622,55 +1560,20 @@ static String renderPage() {
           "if (applyBtn) applyBtn.disabled = (n === 0);"
           "if (n > 0) {"
           "var el = cutEditorState.selected[0];"
-          "document.getElementById('editCutType').value = cutEditorCutTypeOf(el);"
+          // A shape with nothing set yet gets On Line preselected rather
+          // than a blank "choose one". On Line is what the Origin treats
+          // an unmarked line as anyway - and it's what a plain converted
+          // file already encodes, since dxf2svg emits Shaper's On Line
+          // gray on every path - so this shows you what the shape
+          // already is instead of pretending it's undecided. Applying it
+          // then just makes that explicit. Anything with a real cut type
+          // still shows its own.
+          "document.getElementById('editCutType').value = cutEditorCutTypeOf(el) || 'online';"
           "var depth = el.getAttributeNS(EDITOR_SHAPER_NS, 'cutDepth') || '';"
           "var depthParsed = parseValueUnit(depth);"
           "document.getElementById('editDepth').value = depthParsed.val || '';"
           "if (depthParsed.unit) document.getElementById('editDepthUnit').value = depthParsed.unit;"
-          // Pre-fill the tool diameter preset (or the custom row) from
-          // this shape's existing shaper:toolDia, the same way depth
-          // just did above - this was missing entirely before, so
-          // reopening an already-edited shape always showed "choose
-          // one" for bit size even though the real value was saved and
-          // correct. Matched numerically (parseFloat), not by string,
-          // since a written value like "0.125in" needs to match a
-          // preset option written as value='0.125|in'.
-          "var toolDia = el.getAttributeNS(EDITOR_SHAPER_NS, 'toolDia') || '';"
-          "var toolDiaParsed = parseValueUnit(toolDia);"
-          "var toolDiaNum = toolDiaParsed.val !== '' ? parseFloat(toolDiaParsed.val) : NaN;"
-          "var toolDiaUnitVal = toolDiaParsed.unit || '';"
-          "var presetSel = document.getElementById('editToolDiaPreset');"
-          "var matchedPreset = '';"
-          "if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
-          "for (var pi = 0; pi < presetSel.options.length; pi++) {"
-          "var optVal = presetSel.options[pi].value;"
-          "if (optVal === '' || optVal === '__custom__') continue;"
-          "var optParts = optVal.split('|');"
-          "if (parseFloat(optParts[0]) === toolDiaNum && optParts[1] === toolDiaUnitVal) { matchedPreset = optVal; break; }"
           "}"
-          "}"
-          "if (matchedPreset) {"
-          "presetSel.value = matchedPreset;"
-          "} else if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
-          "presetSel.value = '__custom__';"
-          "document.getElementById('editToolDiaCustom').value = toolDiaParsed.val;"
-          "document.getElementById('editToolDiaUnit').value = toolDiaUnitVal;"
-          "} else {"
-          "presetSel.value = '';"
-          "document.getElementById('editToolDiaCustom').value = '';"
-          "}"
-          "handleEditToolDiaPresetChange();"
-          "toggleEditToolDiaWrap();"
-          "}"
-          "}"
-          "function toggleEditToolDiaWrap() {"
-          "var ct = document.getElementById('editCutType').value;"
-          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
-          "document.getElementById('editToolDiaWrap').style.display = needsOffset ? '' : 'none';"
-          "}"
-          "function handleEditToolDiaPresetChange() {"
-          "var isCustom = document.getElementById('editToolDiaPreset').value === '__custom__';"
-          "document.getElementById('editToolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
           "}"
           "function applyToSelectedShapes() {"
           "var cutType = document.getElementById('editCutType').value;"
@@ -1678,26 +1581,8 @@ static String renderPage() {
           "if (cutEditorState.selected.length === 0) { alert('Select at least one line first.'); return; }"
           "var depthVal = document.getElementById('editDepth').value;"
           "var depthUnit = document.getElementById('editDepthUnit').value;"
-          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
-          "var toolDiaVal = '', toolDiaUnit = 'mm';"
-          "if (needsOffset) {"
-          "var preset = document.getElementById('editToolDiaPreset').value;"
-          "if (preset === '__custom__') {"
-          "toolDiaVal = document.getElementById('editToolDiaCustom').value;"
-          "toolDiaUnit = document.getElementById('editToolDiaUnit').value;"
-          "} else if (preset) {"
-          "var presetParts = preset.split('|');"
-          "toolDiaVal = presetParts[0];"
-          "toolDiaUnit = presetParts[1];"
-          "}"
-          "if (!toolDiaVal || isNaN(parseFloat(toolDiaVal))) {"
-          "alert('Outside/Inside/Pocket cuts need a tool diameter.');"
-          "return;"
-          "}"
-          "}"
           "var depthAttr = null;"
           "if (depthVal !== '' && !isNaN(parseFloat(depthVal))) depthAttr = parseFloat(depthVal) + depthUnit;"
-          "var toolDiaAttr = needsOffset ? (parseFloat(toolDiaVal) + toolDiaUnit) : null;"
           "var sel = cutEditorState.selected.slice();"
           "for (var i = 0; i < sel.length; i++) {"
           "var el = sel[i];"
@@ -1705,13 +1590,11 @@ static String renderPage() {
           // The part the Origin actually reads - see applyShaperCutColors.
           "applyShaperCutColors(el, cutType);"
           "if (depthAttr) el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutDepth', depthAttr);"
-          "if (toolDiaAttr) {"
-          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
-          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
-          "} else {"
+          // Clear any tool diameter left on the shape by an older build,
+          // so re-saving a file cleans it out rather than preserving a
+          // field this app no longer writes or reads.
           "el.removeAttributeNS(EDITOR_SHAPER_NS, 'toolDia');"
           "el.removeAttributeNS(EDITOR_SHAPER_NS, 'cutOffset');"
-          "}"
           "}"
           "cutEditorState.selected = [];"
           "for (var j = 0; j < sel.length; j++) cutEditorRecolor(sel[j]);"
@@ -1774,23 +1657,6 @@ static String renderPage() {
           "var cutType = document.getElementById('cutType').value;"
           "var cutDepthVal = document.getElementById('cutDepth').value;"
           "var cutDepthUnit = document.getElementById('cutDepthUnit').value;"
-          "var toolDiaPresetVal = document.getElementById('toolDiaPreset').value;"
-          "var toolDiaVal, toolDiaUnit;"
-          "if (toolDiaPresetVal === '__custom__') {"
-          "toolDiaVal = document.getElementById('toolDiaCustom').value;"
-          "toolDiaUnit = document.getElementById('toolDiaUnit').value;"
-          "} else if (toolDiaPresetVal) {"
-          "var toolDiaParts = toolDiaPresetVal.split('|');"
-          "toolDiaVal = toolDiaParts[0];"
-          "toolDiaUnit = toolDiaParts[1];"
-          "} else {"
-          "toolDiaVal = '';"
-          "toolDiaUnit = 'mm';"
-          "}"
-          // Pass 1: convert every selected DXF client-side first (SVGs pass
-          // through untouched). This means we know every output filename
-          // before asking about overwrites, so the user gets one prompt
-          // covering the whole batch instead of one popup per file.
           "status.textContent = 'Preparing ' + files.length + ' file(s)...';"
           "var jobs = [];"
           "for (var i = 0; i < files.length; i++) {"
@@ -1805,12 +1671,12 @@ static String renderPage() {
           "if (skippedParts.length) msg += ', skipped ' + skippedParts.join(', ');"
           "var svgName = f.name.replace(/\\.dxf$/i, '') + '.svg';"
           "var svgOut = result.svg;"
-          "if (cutType || cutDepthVal) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
+          "if (cutType || cutDepthVal) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit);"
           "jobs.push({name: f.name, svgName: svgName, blob: new Blob([svgOut], {type: 'image/svg+xml'}), msg: msg});"
           "} else {"
           "if (cutType || cutDepthVal) {"
           "var svgText = await f.text();"
-          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
+          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit);"
           "jobs.push({name: f.name, svgName: f.name, blob: new Blob([svgText], {type: 'image/svg+xml'})});"
           "} else {"
           "jobs.push({name: f.name, svgName: f.name, blob: f});"

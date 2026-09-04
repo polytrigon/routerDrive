@@ -35,9 +35,9 @@ file list, then the upload form.
    automatically, right in your browser).
 2. Optionally pick units (mm/inches - only matters for DXF files) and a
    folder to upload into (see "Folders" below).
-3. Optionally set a **Cut type**, **Tool diameter**, and **Cut depth** -
-   see "Cut type, depth, and tool diameter" below. Leave Cut type on
-   "unset" to skip this and upload the file exactly as converted.
+3. Optionally set a **Cut type** and **Cut depth** - see "Cut type and
+   depth" below. Leave Cut type on "unset" to skip this and upload the
+   file exactly as converted.
 4. Click **Convert & upload**.
 5. If a file with that name already exists in the target folder, you'll
    get a warning before it's overwritten.
@@ -58,17 +58,19 @@ will show it. The computer just hasn't looked again. Restart
 RouterDrive, or eject and replug the cable, and it turns up. Worth
 knowing before you go hunting for a problem that isn't there.
 
-## Cut type, depth, and tool diameter
+## Cut type and depth
 
 Above the upload button:
 
 - **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "unset."
   Whichever you pick applies to *every* line in that upload.
-- **Tool diameter**: only shown for Outside/Inside/Pocket (the cut types
-  that need to know your bit size to offset the toolpath correctly).
-  Pick a common size from the dropdown, or "Custom..." for anything
-  else.
 - **Cut depth**: optional. Leave blank to not set one.
+
+**Bit size isn't set here, and doesn't need to be.** You tell the Origin
+which bit is in the router, and that's what it uses - nothing in the file
+changes it. RouterDrive used to offer a bit size dropdown; it turned out
+to have no effect on the machine, so it's gone rather than sitting there
+implying otherwise. Set your bit on the Origin, same as always.
 
 This is a whole-file setting - useful when every line in the design
 should be cut the same way. For a design that needs more than one cut
@@ -97,9 +99,11 @@ for the whole file. For this, use the file list instead:
 3. A viewer opens showing the actual file. Click a line to select it -
    it highlights in cyan. Shift-click to select more than one line at
    once if several should share the same setting.
-4. In the side panel, pick a **Cut type** (plus **Tool diameter**/**Cut
-   depth** if that type needs them) and click **Apply to selected**. The
-   line(s) recolor to match - the small legend in the panel shows which
+4. In the side panel, pick a **Cut type** (and a **Cut depth** if you
+   want one) and click **Apply to selected**. If the line has never been
+   set, the dropdown starts on **On Line**, which is what the Origin
+   assumes for an unmarked line anyway - so it's a safe starting point,
+   not a guess about your design. The line(s) recolor to match - the small legend in the panel shows which
    color means what, so you can see at a glance what's been set and
    what's still black (not set yet).
 5. Repeat steps 3-4 for any other lines that need a different setting.
@@ -110,8 +114,7 @@ for the whole file. For this, use the file list instead:
 Once a file has more than one cut type on it, its **Cut type** column in
 the file list shows **Mixed** instead of a single type - that's your
 signal it's using per-line settings rather than one blanket type. A file
-with nothing set at all shows **Unset** in both the Cut type and Bit
-size columns.
+with nothing set at all shows **Unset**.
 
 ## Files you set up in another app
 

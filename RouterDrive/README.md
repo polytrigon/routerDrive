@@ -425,17 +425,14 @@ upload request per file itself.
 
 The "Upload files" section has optional controls above the "Convert &
 upload" button: a **Cut type** dropdown (Outside / Inside / Pocket / On
-Line / Guide), a **Tool diameter** dropdown (only shown when the cut type
-needs one - see below), and a **Cut depth** field with a small unit
-dropdown (mm/in, defaults to mm). Set any of these and every shape in
-every file you're about to upload gets them stamped on, in-browser,
-before the file ever reaches the device - the ESP32 itself doesn't touch
-this, same "do it client-side in JS" approach as the DXF converter.
+Line / Guide) and a **Cut depth** field with a small unit dropdown
+(mm/in, defaults to mm). Set either of these and every shape in every
+file you're about to upload gets them stamped on, in-browser, before the
+file ever reaches the device - the ESP32 itself doesn't touch this, same
+"do it client-side in JS" approach as the DXF converter.
 
-The **Tool diameter** dropdown lists common router bit sizes (1/8", 1/4",
-3/8", 1/2" and 3mm, 6mm, 8mm, 10mm) so the common case is one click - pick
-"Custom..." to reveal a free-entry field with its own mm/in unit dropdown
-for anything not listed.
+There is deliberately no bit-size control here; see "Bit size isn't in
+the file" below.
 
 ### How cut types are actually encoded
 
@@ -465,8 +462,8 @@ values above are what Shaper's own tools emit, so that's what this app
 writes.
 
 **The `shaper:` attributes are metadata, not the mechanism.** Both
-writers still add them (`shaper:cutType`, `shaper:toolDia`,
-`shaper:cutOffset`, and `shaper:cutDepth` when a depth is set, plus a
+writers still add them (`shaper:cutType`, and `shaper:cutDepth` when a
+depth is set, plus a
 single `xmlns:shaper="http://www.shapertools.com/namespaces/shaper"`
 declaration on the root `<svg>`) because Shaper Studio's own exports
 carry them, `shaper:cutDepth` *is* documented as a real depth override,
@@ -485,20 +482,29 @@ its on-screen preview and draws thin outlines in its own palette (see
 the legend under the viewer), so the drawing stays readable while you
 work on it.
 
-**Why tool diameter matters:** Outside/Inside/Pocket are all *offset*
-cuts - Origin has to know the bit diameter to compute how far to offset
-the toolpath from the drawn line, so a real export always carries
-`shaper:toolDia` (and `shaper:cutOffset`, the *additional* offset beyond
-the bit radius - `0` unless you want extra clearance) for those three
-types. On Line and Guide need no offset, so no tool diameter is required
-and the field stays hidden. Note the value format: Shaper writes these
-with **no space** between number and unit (`0.125in`, `6.35mm`) - the
-documented `shaper:cutDepth` examples do the same - so this app does
-too. An earlier version wrote `0.125 in` with a space, which is one of
-several things that had to be corrected before this worked at all.
+**Bit size isn't in the file.** Outside/Inside/Pocket are *offset* cuts,
+so Origin does need a bit diameter to work out how far to offset the
+toolpath - but it takes that from the bit you tell the machine you've
+loaded, not from the SVG. Earlier versions of this app wrote a
+`shaper:toolDia` (and a `shaper:cutOffset`) attribute and offered a bit
+size dropdown to go with it. Testing on a real Origin showed the setting
+on the tool never moved no matter what the file said, so both the
+attribute and the dropdown were removed: they were clutter that implied
+the file was in charge when the machine always was. The per-line editor
+also strips those two attributes from files that still carry them, so an
+old file gets tidied up the first time you edit it. **Set your bit on the
+Origin, as you would for any other file.**
 
-Leave the cut type dropdown on "unset" and the depth/tool diameter
-fields blank to upload a file exactly as-is (the pre-existing behavior) -
+Note the value format for the attributes that do matter: Shaper writes
+them with **no space** between number and unit (`9mm`, `0.25in`) - the
+documented `shaper:cutDepth` examples do the same - so this app does
+too. An earlier version wrote `9 mm` with a space, which is one of
+several things that had to be corrected before this worked at all.
+Reading is still tolerant of the old spaced form, so files saved by
+those builds still reopen correctly.
+
+Leave the cut type dropdown on "unset" and the depth field
+blank to upload a file exactly as-is (the pre-existing behavior) -
 useful if a file already has its own per-shape cut types you don't want
 overwritten, e.g. one you exported from Origin itself. Whichever values
 you do pick here apply uniformly to every shape in that upload - this is
@@ -524,8 +530,7 @@ in the browser. Click a line to select it (its outline turns cyan);
 shift-click to add more lines to the selection so you can set several at
 once. With something selected, pick a **Cut type** in the side panel
 (same Outside/Inside/Pocket/On Line/Guide choices as the Upload section,
-plus **Tool diameter** and **Cut depth** for the types that need them),
-then click **Apply to selected** - the selected lines are recolored to
+plus **Cut depth**), then click **Apply to selected** - the selected lines are recolored to
 match their new cut type (a small legend in the panel shows which color
 means what) so you can see at a glance what's been set and what hasn't
 (unset lines stay black). Repeat for as many different lines/cut types
@@ -602,8 +607,8 @@ be undone.
 
 ## The file list
 
-Each file's row shows a checkbox, its name, size, upload date, cut type,
-and bit size. Check any number of files - this also turns on the
+Each file's row shows a checkbox, its name, size, upload date, and cut
+type. Check any number of files - this also turns on the
 **"Rename"**, **"Move"** and **"Delete"** buttons beneath the table (all
 start greyed out/inactive, since none of them does anything with nothing
 selected). The checkbox in the header selects/deselects every row
@@ -657,10 +662,12 @@ time instead of UTC). If your network has no internet access, or a file
 was uploaded before the very first sync completed, its date just shows
 as "-" instead of guessing.
 
-The **Cut type** and **Bit size** columns read straight off each file's
-own `shaper:cutType`/`shaper:toolDia` attributes (see "Cut type & cut
-depth" above) - RouterDrive doesn't keep a separate database of what you
-uploaded, it peeks at the file's own content instead. If every shape in
+The **Cut type** column reads straight off each file's own content (see
+"Cut type & cut depth" above) - RouterDrive doesn't keep a separate
+database of what you uploaded, it peeks at the file itself instead. It
+prefers `shaper:cutType` when the file has it and falls back to the
+fill/stroke colors otherwise, so a file that was color-coded in Affinity,
+Illustrator or Inkscape still reports its cut types here. If every shape in
 the file agrees on one cut type, that's what shows; if they don't (either
 because you gave individual lines different types with the per-line
 editor - see "Editing individual lines' cut type" above - or because the
@@ -714,14 +721,12 @@ usable instead of growing into one long scroll.
 - The captive-portal redirect is a basic "send everything to /" approach;
   some phones/OSes are pickier about what makes them auto-pop the sign-in
   page. Manually browsing to the AP's IP always works as a fallback.
-- The cut-type dropdown's `pocket`/`online`/`guide` values are inferred,
-  not hardware-confirmed like `outside`/`inside` are - see "Cut type &
-  cut depth" above. Worth a real test upload before trusting them.
-- The cut-type/tool-diameter fix (adding `shaper:toolDia`/`cutOffset` and
-  fixing the `xmlns:shaper` namespace declaration - see "Cut type & cut
-  depth" above) hasn't been re-verified on real hardware yet since it was
-  made in response to a real bug report. Test an Outside/Inside/Pocket
-  cut with a tool diameter set before relying on it.
+- Outside and Pocket are hardware-confirmed on a real Origin (a
+  box-within-a-box test part, outer line Outside, inner line Pocket, cut
+  types read correctly off the file). Inside, On Line and Guide are
+  written with the same color encoding from the same table, so they
+  should behave identically, but nobody has put those three on the
+  machine yet - worth a test cut before trusting them for a real job.
 - Folders (see "Folders" above), including creating/deleting them and
   moving files between them, are new and not yet hardware-tested -
   confirm the Origin actually shows subfolder contents the way you expect
@@ -736,39 +741,30 @@ usable instead of growing into one long scroll.
   rather than an always-visible dropdown - both are Playwright-verified
   against the real extracted page script but not yet exercised against
   the device itself.
-- The file list's **Cut type**/**Bit size** columns read each file's
-  `shaper:cutType`/`shaper:toolDia` attributes straight off a bounded
-  scan of the file's own content (up to 4KB from the front of the file -
-  see `readShaperInfo()`/`scanAttrMixed()` in `web_server.cpp`), done
-  once per file while the folder listing is already built - this is also
-  how "Mixed" gets detected (more than one distinct value found within
-  that same 4KB window). Verified with a standalone C++ test of the
-  extraction/mixed-detection logic against realistic and edge-case SVG
-  content (no shaper attributes at all, On Line/Guide with no toolDia,
-  multiple shapes agreeing and disagreeing), but not yet run against a
-  real uploaded file on the device - if a file's first shape has an
-  unusually long `d` attribute (a very complex tessellated curve) ahead
-  of its `shaper:*` attributes, the 4KB scan could miss later, differing
-  values entirely and under-report "Mixed" as a single type (or "-");
-  worth watching for on a folder with genuinely complex geometry.
+- The file list's **Cut type** column used to read only the first 4KB of
+  each file, which was a real bug: a per-line edit further into the file
+  was invisible, so a genuinely mixed file reported a single type (or
+  nothing at all). `readShaperInfo()` now streams the whole file in
+  overlapping chunks instead, with a generous hard cap, so an attribute
+  anywhere in the file is found. It prefers `shaper:cutType` and falls
+  back to classifying fill/stroke colors, which is what lets a file
+  color-coded in another app report its cut types here. Covered by
+  standalone C++ tests (`test_stream_scan.cpp`, `test_color_detect.cpp`)
+  including attributes straddling a chunk boundary and a real Shaper
+  Studio export, and confirmed on the device against real uploaded files.
 - The per-line cut editor (see "Editing individual lines' cut type"
-  above) is new this session and entirely unverified on real hardware -
-  Playwright-tested against the real extracted page script (opening a
-  fetched SVG, clicking to select single and multiple lines, applying a
-  cut type/depth/tool diameter to the selection, the "Mixed" round trip
-  end to end) and screenshot-checked for layout, but every actual byte
-  it writes still goes through the same `/upload` endpoint a normal
-  upload does, so confirm on the device that a file edited this way
-  imports into the Origin with the right per-line cut types before
-  relying on it for a real job. It also adds a new `GET /svg` route
+  above) is Playwright-tested against the real extracted page script
+  (opening a fetched SVG, clicking to select single and multiple lines,
+  applying a cut type and depth to the selection, the "Mixed" round trip
+  end to end), screenshot-checked for layout, and confirmed end to end on
+  a real Origin. It also adds a new `GET /svg` route
   (`handleGetSvg()` in `web_server.cpp`) that reads a stored file's
   entire content into memory and serves it back to the browser - unlike
-  every other per-file read in this app, which deliberately caps itself
-  at 4KB to protect the ESP32's limited SRAM, this one reads the whole
-  file since it only ever runs for one file at a time, on demand. No
-  ESP32 toolchain is available where this was built, so neither the
-  route itself nor that memory tradeoff has been exercised on real
-  hardware yet - watch for it failing on an unusually large SVG.
+  the cut-type scan, which streams the file a chunk at a time and never
+  holds more than a couple of KB, this one reads the whole file into
+  SRAM - acceptable because it only ever runs for one file at a time, on
+  demand. It works on real files but hasn't been pushed with an unusually
+  large SVG, so that's where to expect trouble first.
 - Very rarely, restarting RouterDrive while it's plugged into the Origin
   has shown the drive briefly enumerate (Origin shows "No files found",
   meaning it did mount it) and then drop out again (back to "No USB drive
