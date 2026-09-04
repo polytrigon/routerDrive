@@ -575,12 +575,24 @@ be undone.
 
 Each file's row shows a checkbox, its name, size, upload date, cut type,
 and bit size. Check any number of files - this also turns on the
-**"Delete"** and **"Move"** buttons beneath the table (both start greyed
-out/inactive, since neither does anything with nothing selected); click
-"Delete" to remove the checked files, or "Move" to reveal a panel for
-picking a destination folder and moving them there instead (see
-"Folders" above) - the checkbox in the header selects/deselects every
-row currently shown.
+**"Rename"**, **"Delete"** and **"Move"** buttons beneath the table (all
+start greyed out/inactive, since none of them does anything with nothing
+selected); click "Delete" to remove the checked files, "Move" to reveal a
+panel for picking a destination folder and moving them there instead (see
+"Folders" above), or "Rename" to open a dialog with one text field per
+checked file - the checkbox in the header selects/deselects every row
+currently shown.
+
+**Rename** posts every field at once to `/rename` as matched
+`from`/`to` pairs, so several files can be renamed in a single round
+trip. Fields you leave alone are skipped rather than reported as
+failures, a new name with no extension keeps the original's (the Origin
+only reads `.svg`, and it's an easy thing to forget), and a rename onto
+an existing name is refused rather than overwriting it. That last check
+also covers the case `FFat.exists()` alone can't see - two files in the
+same batch renamed onto one name, where the first rename creates the
+very file the second would collide with - by tracking names claimed
+earlier in the same loop.
 You'll get one confirmation before anything is deleted or moved, same
 `confirm()`-dialog pattern as the overwrite warnings above (naming the
 file, or the count, if you selected more than one). Selection only
@@ -604,9 +616,33 @@ because you gave individual lines different types with the per-line
 editor - see "Editing individual lines' cut type" above - or because the
 file already had more than one cut type baked in when it arrived, e.g.
 uploaded with cut type left "unset"), the column shows **Mixed**
-instead of guessing which one to display. A file that never went through
-either the upload cut-type feature or the per-line editor - e.g. a
-hand-edited SVG with no `shaper:` attributes at all - shows "-" in both
+instead of guessing which one to display.
+
+Files that carry no `shaper:` attributes at all get a second pass: the
+same fill/stroke colors Origin itself reads (see "How cut types are
+actually encoded" above) are scanned for directly, so a file coloured
+correctly in Affinity, Illustrator or Inkscape reports its real cut types
+rather than looking empty. That scan is deliberately tolerant about
+spelling - `#000`, `#000000`, `rgb(0,0,0)` and CSS `style="fill:..."`
+all count, and any equal-RGB gray is a gray, matching Shaper's own
+guidance. It is also deliberately not per-element (associating a fill
+with its own shape would mean parsing whole `<path>` tags, `d` attribute
+and all, which won't fit the small streaming buffer `readShaperInfo()`
+uses) - it reports which cut types appear anywhere in the file, which is
+exactly what the column is for.
+
+One judgement call worth knowing about: a **plain gray stroke on its own
+counts as nothing set, not as On Line**. Gray stroke is what the DXF
+converter emits for every path so that a freshly converted file is valid
+to Origin, so treating it as a deliberate choice would label every
+single unedited upload "On Line". An explicit `shaper:cutType="online"`
+does show as On Line - that's a statement of intent, the bare color is a
+baseline. The practical cost is that a file where someone deliberately
+set *everything* to On Line in another app reads as Unset; it's
+byte-identical to the baseline, so there's nothing to tell them apart,
+and the resulting cut is the same either way.
+
+A file with nothing detectable by either route shows **Unset** in both
 columns. The **Cut type** cell is itself a button: click it (whatever it
 currently shows) to open the per-line editor for that file.
 

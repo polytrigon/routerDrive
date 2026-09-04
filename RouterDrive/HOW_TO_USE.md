@@ -93,7 +93,33 @@ for the whole file. For this, use the file list instead:
 
 Once a file has more than one cut type on it, its **Cut type** column in
 the file list shows **Mixed** instead of a single type - that's your
-signal it's using per-line settings rather than one blanket type.
+signal it's using per-line settings rather than one blanket type. A file
+with nothing set at all shows **Unset** in both the Cut type and Bit
+size columns.
+
+## Files you set up in another app
+
+You don't have to use RouterDrive's editor at all. Origin identifies cut
+types by color, so a file you've already colored correctly in Affinity,
+Illustrator, Inkscape or anything else works as-is - just upload it with
+Cut type left on "unset" so nothing overwrites what you did.
+
+RouterDrive reads those colors too, so the file list shows the real cut
+types for those files the same way it does for its own - **Pocket**,
+**Outside**, **Mixed**, and so on - rather than pretending nothing is
+set. The colors it looks for are the ones Shaper's own software uses:
+
+| Cut type | fill | stroke |
+|---|---|---|
+| Outside | black | none |
+| Inside | white | black |
+| Pocket | gray | none |
+| On Line | none | gray |
+| Guide | none | blue |
+
+Any reasonable gray works (Shaper's own advice is just to make the red,
+green and blue values equal), and so do the usual ways of writing a
+color - `#000`, `#000000`, `rgb(0,0,0)`, or a CSS `style` attribute.
 
 ## Folders
 
@@ -112,8 +138,14 @@ list - either way it'll prompt you for a name.
 
 ## Managing the file list
 
-- Check any number of files to enable **Delete** and **Move** (both stay
-  greyed out until something's checked).
+- Check any number of files to enable **Rename**, **Delete** and **Move**
+  (all three stay greyed out until something's checked).
+- **Rename** opens a dialog with one text field per file you checked,
+  each starting out as that file's current name. Change the ones you
+  want and leave the rest alone - anything you don't touch is skipped.
+  If you don't type an extension, the original one is kept for you, so
+  `bracket` becomes `bracket.svg`. Renaming onto a name that's already
+  taken is refused rather than overwriting it.
 - The search box filters by filename; a Prev/Next pager shows up once
   you have enough files that they don't fit on one page.
 - The **Uploaded** date needs the device to have synced time over the

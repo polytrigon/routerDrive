@@ -118,6 +118,32 @@ static bool isValidFolderName(const String &name) {
   return true;
 }
 
+static const int MAX_FILE_NAME_LEN = 64;
+
+// File names the user typed into the Rename dialog. Looser than
+// isValidFolderName (a "." has to be allowed, or you couldn't keep the
+// extension) but still deliberately boring - nothing that could climb out
+// of its folder or upset FAT. Note this runs on an already-basenameOf()'d
+// string, so a slash can only appear here if something went wrong, and it
+// is rejected rather than quietly stripped.
+static bool isValidFileName(const String &name) {
+  if (name.length() == 0 || name.length() > MAX_FILE_NAME_LEN) return false;
+  if (name == "." || name == "..") return false;
+  if (name[0] == ' ' || name[name.length() - 1] == ' ') return false;
+  if (name[0] == '.') return false; // no hidden/extension-only names
+  for (size_t i = 0; i < name.length(); i++) {
+    char c = name[i];
+    bool ok = isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_' || c == '.';
+    if (!ok) return false;
+  }
+  return true;
+}
+
+static String extensionOf(const String &name) {
+  int dot = name.lastIndexOf('.');
+  return dot > 0 ? name.substring(dot) : String("");
+}
+
 static String htmlEscape(const String &in) {
   String out = in;
   out.replace("&", "&amp;");
@@ -285,22 +311,177 @@ static void scanChunkForAttr(const String &chunk, const String &attrName, String
   if (chunkMixed) mixed = true;
 }
 
+// ---------------------------------------------------------------------------
+// Cut type detection from COLOR, for files this app didn't write.
+//
+// Origin selects a shape's cut type from its fill/stroke color, not from
+// shaper:cutType (see applyShaperCutColors() in the page script for the
+// full story). So a file prepared in Affinity, Illustrator or anything
+// else that follows Shaper's published color encoding is perfectly valid
+// and will cut correctly - it just carries no shaper:* attributes at all,
+// which used to leave the file list showing nothing for it. This scans
+// for the colors themselves so those files report their real cut types.
+//
+// Deliberately NOT per-element: associating a fill with its own shape
+// would mean parsing whole <path> tags, which can be many KB each (the d
+// attribute) and would blow past the small chunk buffer this streams
+// through. It doesn't need to - the encoding is unambiguous per color
+// (fill-encoded types always pair with no stroke, stroke-encoded types
+// with no fill), so "which cut types appear anywhere in this file" is
+// answerable from the set of colors present, which is exactly what the
+// Cut type column reports.
+// ---------------------------------------------------------------------------
+static const uint8_t CUTCOLOR_OUTSIDE = 1 << 0; // black fill
+static const uint8_t CUTCOLOR_INSIDE  = 1 << 1; // white fill
+static const uint8_t CUTCOLOR_POCKET  = 1 << 2; // gray fill
+static const uint8_t CUTCOLOR_ONLINE  = 1 << 3; // gray stroke
+static const uint8_t CUTCOLOR_GUIDE   = 1 << 4; // blue stroke
+
+// Normalizes a CSS/SVG color to lowercase 6-digit hex, or "" if it isn't
+// one we can compare (none, currentColor, a named color, a gradient url).
+// Handles #abc shorthand and rgb(r, g, b) since other design tools emit
+// both - this is exactly the code path that exists to read THEIR files,
+// so being liberal about the spelling matters here.
+static String normalizeColor(const String &raw) {
+  String v = raw;
+  v.trim();
+  v.toLowerCase();
+  if (v.startsWith("#")) {
+    String hex = v.substring(1);
+    if (hex.length() == 3) {
+      String out = "";
+      for (int i = 0; i < 3; i++) {
+        out += hex[i];
+        out += hex[i];
+      }
+      return out;
+    }
+    if (hex.length() == 6) return hex;
+    return "";
+  }
+  if (v.startsWith("rgb(")) {
+    int close = v.indexOf(')');
+    if (close < 0) return "";
+    String inner = v.substring(4, close);
+    int vals[3] = {-1, -1, -1};
+    int idx = 0, from = 0;
+    while (idx < 3) {
+      int comma = inner.indexOf(',', from);
+      String part = (comma < 0) ? inner.substring(from) : inner.substring(from, comma);
+      part.trim();
+      if (part.length() == 0) return "";
+      vals[idx++] = part.toInt();
+      if (comma < 0) break;
+      from = comma + 1;
+    }
+    if (idx < 3) return "";
+    String out = "";
+    for (int i = 0; i < 3; i++) {
+      if (vals[i] < 0 || vals[i] > 255) return "";
+      char b[3];
+      snprintf(b, sizeof(b), "%02x", vals[i]);
+      out += b;
+    }
+    return out;
+  }
+  return "";
+}
+
+static bool hexChannels(const String &hex, int &r, int &g, int &b) {
+  if (hex.length() != 6) return false;
+  r = (int)strtol(hex.substring(0, 2).c_str(), nullptr, 16);
+  g = (int)strtol(hex.substring(2, 4).c_str(), nullptr, 16);
+  b = (int)strtol(hex.substring(4, 6).c_str(), nullptr, 16);
+  return true;
+}
+
+// Origin matches these tolerantly rather than by exact hex - Shaper's own
+// "readable gray" guide just tells you to make R, G and B equal - so
+// match on the same basis instead of demanding the exact values Shaper's
+// software happens to emit.
+static uint8_t classifyFillColor(const String &hex) {
+  int r, g, b;
+  if (!hexChannels(hex, r, g, b)) return 0;
+  if (r == g && g == b) {
+    if (r <= 32) return CUTCOLOR_OUTSIDE;  // black fill
+    if (r >= 224) return CUTCOLOR_INSIDE;  // white fill
+    return CUTCOLOR_POCKET;                 // any other true gray
+  }
+  return 0;
+}
+
+static uint8_t classifyStrokeColor(const String &hex) {
+  int r, g, b;
+  if (!hexChannels(hex, r, g, b)) return 0;
+  // Blue guide lines: clearly blue-dominant rather than an exact #0068FF.
+  if (b >= 128 && b > r + 60 && b > g + 60) return CUTCOLOR_GUIDE;
+  // Gray stroke = On Line. Pure black is excluded on purpose: it's the
+  // companion stroke of a white-filled Interior cut, not a type of its
+  // own, and it's also what a generic un-encoded outline SVG uses.
+  if (r == g && g == b && r > 32 && r < 224) return CUTCOLOR_ONLINE;
+  return 0;
+}
+
+// Collects every fill/stroke color in one chunk, in both the presentation
+// attribute form (fill="#000") and the inline style form
+// (style="fill:#000;stroke:none") that other design tools commonly emit.
+// Note the needles include the delimiter, so stroke-width="..." and
+// fill-rule:... can't be mistaken for a color.
+static void scanChunkColors(const String &chunk, uint8_t &hits) {
+  struct { const char *needle; char terminator; bool isFill; } probes[] = {
+    {"fill=\"",   '"', true},
+    {"stroke=\"", '"', false},
+    {"fill:",     ';', true},
+    {"stroke:",   ';', false},
+  };
+  for (size_t p = 0; p < sizeof(probes) / sizeof(probes[0]); p++) {
+    String needle = probes[p].needle;
+    int from = 0;
+    while (true) {
+      int idx = chunk.indexOf(needle, from);
+      if (idx < 0) break;
+      int start = idx + needle.length();
+      // A style-form value can end at ';' OR at the closing quote of the
+      // style attribute itself, whichever comes first.
+      int end = chunk.indexOf(probes[p].terminator, start);
+      if (probes[p].terminator == ';') {
+        int quote = chunk.indexOf('"', start);
+        if (quote >= 0 && (end < 0 || quote < end)) end = quote;
+      }
+      if (end < 0) break;
+      String value = chunk.substring(start, end);
+      from = end;
+      String hex = normalizeColor(value);
+      if (hex.length() == 0) continue;
+      hits |= probes[p].isFill ? classifyFillColor(hex) : classifyStrokeColor(hex);
+    }
+  }
+}
+
+static int countBits(uint8_t v) {
+  int n = 0;
+  while (v) { n += (v & 1); v >>= 1; }
+  return n;
+}
+
 // Streams an already-open file handle (left at its current read position
 // - call this before any other read on the same handle, and before the
 // handle is closed) through a small fixed-size buffer, pulling out
-// shaper:cutType/shaper:toolDia if present anywhere in it. A plain SVG
-// never run through the cut-type feature (or uploaded with cut type left
-// "unset" AND never edited per-line) leaves both blank - the file list
-// shows "-" for those. cutType comes back as the sentinel raw value
-// "mixed" (see cutTypeLabel()) when more than one distinct shaper:cutType
-// value is present; toolDia comes back as the literal display string
-// "Mixed" directly, since (unlike cutType) it's shown as-is with no
-// separate label-mapping step.
+// shaper:cutType/shaper:toolDia if present anywhere in it, and otherwise
+// falling back to reading the cut types straight out of the file's colors
+// (see the color scanner above). Only a file with neither - no shaper:*
+// attributes AND nothing but plain un-encoded outlines - comes back
+// blank, which the file list shows as "Unset". cutType comes back as the
+// sentinel raw value "mixed" (see cutTypeLabel()) when more than one
+// distinct cut type is present; toolDia comes back as the literal display
+// string "Mixed" directly, since (unlike cutType) it's shown as-is with
+// no separate label-mapping step.
 static void readShaperInfo(File &f, String &cutType, String &toolDia) {
   cutType = "";
   toolDia = "";
   if (f.size() == 0) return;
   bool cutTypeMixed = false, toolDiaMixed = false;
+  uint8_t colorHits = 0;
   char *buf = new char[SHAPER_SCAN_CHUNK + 1];
   String overlapTail = "";
   size_t totalRead = 0;
@@ -312,12 +493,41 @@ static void readShaperInfo(File &f, String &cutType, String &toolDia) {
     String chunk = overlapTail + String(buf);
     scanChunkForAttr(chunk, "shaper:cutType", cutType, cutTypeMixed);
     scanChunkForAttr(chunk, "shaper:toolDia", toolDia, toolDiaMixed);
-    if (cutTypeMixed && toolDiaMixed) break; // both already confirmed mixed
+    scanChunkColors(chunk, colorHits);
+    // No early break on "both mixed" any more: the color scan has to see
+    // the whole file to be able to report a color-encoded file correctly,
+    // and stopping early would make the answer depend on where in the
+    // file the attributes happened to sit.
     overlapTail = (chunk.length() > SHAPER_SCAN_OVERLAP) ? chunk.substring(chunk.length() - SHAPER_SCAN_OVERLAP) : chunk;
   }
   delete[] buf;
   if (cutTypeMixed) cutType = "mixed";
   if (toolDiaMixed) toolDia = "Mixed";
+
+  // shaper:cutType, where present, is an explicit statement of intent and
+  // wins outright. Only fall back to colors for a file that carries none
+  // - i.e. one this app didn't write and that didn't come from Shaper
+  // Studio either.
+  if (cutType.length() > 0) return;
+
+  // A plain gray stroke on its own is the neutral baseline, not a choice:
+  // it's what this app's own DXF converter emits for every path so that a
+  // freshly converted file is valid to Origin, so treating it as "On Line
+  // was deliberately set" would label every single unedited upload. Only
+  // report a cut type once something other than that baseline shows up.
+  uint8_t meaningful = colorHits & ~CUTCOLOR_ONLINE;
+  if (meaningful == 0) return; // stays blank -> "Unset"
+  if (countBits(colorHits) > 1) {
+    cutType = "mixed";
+  } else if (colorHits & CUTCOLOR_OUTSIDE) {
+    cutType = "outside";
+  } else if (colorHits & CUTCOLOR_INSIDE) {
+    cutType = "inside";
+  } else if (colorHits & CUTCOLOR_POCKET) {
+    cutType = "pocket";
+  } else if (colorHits & CUTCOLOR_GUIDE) {
+    cutType = "guide";
+  }
 }
 
 // Display label for the file list's Cut type column - mirrors the Upload
@@ -331,7 +541,11 @@ static String cutTypeLabel(const String &raw) {
   if (raw == "pocket") return "Pocket";
   if (raw == "online") return "On Line";
   if (raw == "guide") return "Guide";
-  return "-";
+  // "Unset" rather than a bare "-": it's the same word the Upload
+  // section's own cut type dropdown uses for this state, and it says
+  // "nothing is set here" instead of leaving you to guess whether the
+  // column is empty or just unknown.
+  return "Unset";
 }
 
 static bool nameContainsCI(const String &name, const String &needleLower) {
@@ -539,7 +753,7 @@ static String renderFilesSection() {
       html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
               "<td><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
               "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td>"
-              "<td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : "-") + "</td></tr>";
+              "<td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : String("Unset")) + "</td></tr>";
     }
   }
   html += "<tr><td colspan=6 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
@@ -561,6 +775,10 @@ static String renderFilesSection() {
     // folder can still be removed from here.
     html += "<div class='file-actions'><div>";
     if (filteredCount > 0) {
+      // Rename sits left of Delete and shares its disabled-until-selected
+      // state, but opens a dialog instead of submitting - the new names
+      // have to be typed somewhere first. See showRenamePanel().
+      html += "<button type='button' id='renameBtn' onclick='showRenamePanel()' disabled>Rename</button> ";
       html += "<button type='submit' id='deleteBtn' formaction='/delete' onclick='return confirmBatchDelete()' disabled>Delete</button>";
       if (hasMoveDest) {
         // "Move" no longer submits directly - it just reveals #movePanel
@@ -850,6 +1068,35 @@ static String renderPage() {
 
   html += renderWifiSection();
 
+  // Rename dialog: hidden by default, opened by the file list's Rename
+  // button. The per-file rows are built client-side from whichever rows
+  // are checked at the moment it opens (see showRenamePanel()), so this
+  // is just the shell. Its own <form> posts to /rename rather than
+  // borrowing #deleteForm, because the rows it submits are the "from"/
+  // "to" pairs it builds itself, not the table's checkboxes. Rendered
+  // unconditionally (it's hidden and nearly empty until opened) - the
+  // Rename button that opens it is itself only drawn when there are files
+  // to act on. lastViewedFolder is set by the renderFilesSection() call
+  // above, so it already reflects the folder being shown.
+  html += "<div id='renameOverlay' class='modal-overlay' style='display:none'>"
+          "<div class='modal-box rename-box'>"
+          "<div class='cut-editor-header'>"
+          "<h3>Rename files</h3>"
+          "<button type='button' class='link-btn' onclick='closeRenamePanel()'>Close</button>"
+          "</div>"
+          "<p class='sub'>Leave a name unchanged to skip that file. If you don't type an "
+          "extension, the original one is kept.</p>"
+          "<form id='renameForm' method='POST' action='/rename' onsubmit='return confirmRename()'>";
+  if (lastViewedFolder.length() > 0) {
+    html += "<input type='hidden' name='dir' value='" + htmlEscape(lastViewedFolder) + "'>";
+  }
+  html += "<div id='renameFields'></div>"
+          "<button type='submit' id='confirmRenameBtn'>Rename</button> "
+          "<button type='button' class='link-btn' onclick='closeRenamePanel()'>Cancel</button>"
+          "</form>"
+          "</div>"
+          "</div>";
+
   // Per-line cut editor: hidden by default, opened from a "Cut type" cell
   // button in the file list above (see cutTypeCell/openCutEditorFromBtn).
   // Fetches the real file's SVG from the new /svg route, renders it, and
@@ -936,8 +1183,10 @@ static String renderPage() {
           "var anyChecked = document.querySelectorAll('#deleteForm .rowcheck:checked').length > 0;"
           "var delBtn = document.getElementById('deleteBtn');"
           "var moveBtn = document.getElementById('moveBtn');"
+          "var renameBtn = document.getElementById('renameBtn');"
           "if (delBtn) delBtn.disabled = !anyChecked;"
           "if (moveBtn) moveBtn.disabled = !anyChecked;"
+          "if (renameBtn) renameBtn.disabled = !anyChecked;"
           "}"
           "function confirmDeleteFolder() {"
           "return confirm('Deleting this folder will also delete all of the contents. Continue?');"
@@ -947,6 +1196,58 @@ static String renderPage() {
           "if (boxes.length === 0) { alert('Select at least one file to delete.'); return false; }"
           "if (boxes.length === 1) return confirm('Delete ' + boxes[0].value + '?');"
           "return confirm('Delete ' + boxes.length + ' files?');"
+          "}"
+          // Builds one labelled text field per checked row, each paired
+          // with a hidden "from" carrying that file's current name, so
+          // handleRename() can match old to new by position. Rebuilt from
+          // scratch every time it opens rather than kept in sync, since
+          // the selection can change freely while the dialog is closed.
+          "function showRenamePanel() {"
+          "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
+          "if (boxes.length === 0) { alert('Select at least one file to rename.'); return; }"
+          "var wrap = document.getElementById('renameFields');"
+          "wrap.innerHTML = '';"
+          "for (var i = 0; i < boxes.length; i++) {"
+          "var name = boxes[i].value;"
+          "var row = document.createElement('div');"
+          "row.className = 'rename-row';"
+          "var hidden = document.createElement('input');"
+          "hidden.type = 'hidden'; hidden.name = 'from'; hidden.value = name;"
+          "var label = document.createElement('label');"
+          "label.className = 'sub';"
+          "label.textContent = name;"
+          "var input = document.createElement('input');"
+          "input.type = 'text'; input.name = 'to'; input.value = name;"
+          "input.className = 'full-width';"
+          "input.setAttribute('maxlength', '64');"
+          "row.appendChild(hidden); row.appendChild(label); row.appendChild(input);"
+          "wrap.appendChild(row);"
+          "}"
+          "document.getElementById('renameOverlay').style.display = 'flex';"
+          "var first = wrap.querySelector('input[name=\"to\"]');"
+          "if (first) { first.focus(); first.select(); }"
+          "}"
+          "function closeRenamePanel() {"
+          "document.getElementById('renameOverlay').style.display = 'none';"
+          "}"
+          // Catches the mistakes worth catching before a round trip; the
+          // device re-validates everything anyway (see handleRename()).
+          "function confirmRename() {"
+          "var inputs = document.querySelectorAll('#renameFields input[name=\"to\"]');"
+          "var seen = {};"
+          "var changed = 0;"
+          "for (var i = 0; i < inputs.length; i++) {"
+          "var v = inputs[i].value.replace(/^\\s+|\\s+$/g, '');"
+          "if (v.length === 0) { alert('A file name cannot be blank.'); inputs[i].focus(); return false; }"
+          "if (v.indexOf('/') >= 0 || v.indexOf('\\\\') >= 0) { alert('File names cannot contain slashes.'); inputs[i].focus(); return false; }"
+          "var key = v.toLowerCase();"
+          "if (seen[key]) { alert('Two files would both be named ' + v + '.'); inputs[i].focus(); return false; }"
+          "seen[key] = true;"
+          "var original = inputs[i].parentNode.querySelector('input[name=\"from\"]');"
+          "if (original && original.value !== v) changed++;"
+          "}"
+          "if (changed === 0) { alert('No names were changed.'); return false; }"
+          "return true;"
           "}"
 "function showMovePanel() {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
@@ -1709,6 +2010,106 @@ static void handleDelete() {
   server.send(303);
 }
 
+// Renames any number of files in one POST, from the Rename dialog (see
+// showRenamePanel() in the page script). The form emits a matched pair of
+// fields per file - a hidden "from" with the current name and a text "to"
+// with whatever the user typed - in that order, so the two lists line up
+// by index here. Anything the user left alone is a no-op and skipped
+// silently rather than reported, so renaming two files out of six checked
+// says "Renamed 2 files" and not "failed: 4".
+static void handleRename() {
+  String folder = server.hasArg("dir") ? server.arg("dir") : "";
+  if (folder.length() > 0 && !isValidFolderName(folder)) {
+    folder = "";
+  }
+  String redirectTo = folder.length() > 0 ? ("/?dir=" + urlEncode(folder)) : "/";
+
+  std::vector<String> fromNames;
+  std::vector<String> toNames;
+  for (int i = 0; i < server.args(); i++) {
+    if (server.argName(i) == "from") {
+      fromNames.push_back(basenameOf(server.arg(i)));
+    } else if (server.argName(i) == "to") {
+      String t = basenameOf(server.arg(i));
+      t.trim();
+      toNames.push_back(t);
+    }
+  }
+  size_t pairCount = min(fromNames.size(), toNames.size());
+  if (pairCount == 0) {
+    server.sendHeader("Location", redirectTo);
+    server.send(303);
+    return;
+  }
+
+  ledSet(LED_BLINK_FAST); // busy
+
+  std::vector<String> renamed;
+  std::vector<String> failed;
+  if (storageBeginAppAccess()) {
+    // Targets claimed earlier in this same batch, so two files can't be
+    // renamed onto each other - FFat.exists() alone wouldn't catch that,
+    // since the first rename creates the very file the second collides
+    // with only after it has already happened.
+    std::vector<String> claimed;
+    for (size_t i = 0; i < pairCount; i++) {
+      String from = fromNames[i];
+      String to = toNames[i];
+      if (from.length() == 0) continue;
+      if (to.length() == 0 || to == from) continue; // left alone -> nothing to do
+      // Keep the original extension when the user didn't type one - it's
+      // an easy thing to forget, and the Origin only reads .svg.
+      if (extensionOf(to).length() == 0) {
+        to += extensionOf(from);
+      }
+      if (!isValidFileName(to)) {
+        failed.push_back(from + " (name not allowed)");
+        continue;
+      }
+      bool alreadyClaimed = false;
+      for (size_t c = 0; c < claimed.size(); c++) {
+        if (claimed[c] == to) { alreadyClaimed = true; break; }
+      }
+      if (alreadyClaimed) {
+        failed.push_back(from + " (two files renamed to " + to + ")");
+        continue;
+      }
+      String fromPath = joinFolder(folder, from);
+      String toPath = joinFolder(folder, to);
+      if (!FFat.exists(fromPath)) {
+        failed.push_back(from + " (no longer there)");
+      } else if (FFat.exists(toPath)) {
+        failed.push_back(from + " (" + to + " already exists)");
+      } else if (FFat.rename(fromPath, toPath)) {
+        renamed.push_back(from + " -> " + to);
+        claimed.push_back(to);
+      } else {
+        failed.push_back(from);
+      }
+    }
+    storageEndAppAccess(true);
+  } else {
+    failed = fromNames;
+  }
+
+  if (renamed.empty() && failed.empty()) {
+    flashMessage = ""; // nothing was actually changed
+  } else if (failed.empty()) {
+    flashMessage = renamed.size() == 1 ? ("Renamed " + renamed[0])
+                                       : ("Renamed " + String(renamed.size()) + " files");
+    flashIsError = false;
+  } else if (renamed.empty()) {
+    flashMessage = "Could not rename: " + joinNames(failed);
+    flashIsError = true;
+  } else {
+    flashMessage = "Renamed " + String(renamed.size()) + " file(s), failed: " + joinNames(failed);
+    flashIsError = true;
+  }
+  ledApplyIdleState();
+  server.sendHeader("Location", redirectTo);
+  server.send(303);
+}
+
 // Creates an empty folder on demand - used by the Files section's
 // "+ New folder..." dropdown entry, which (unlike the Upload section's
 // same-named entry) has no upload to piggyback the mkdir onto, since
@@ -2010,6 +2411,7 @@ void webServerInit() {
   server.on("/mkdir", HTTP_POST, handleMkdir);
   server.on("/deletefolder", HTTP_POST, handleDeleteFolder);
   server.on("/move", HTTP_POST, handleMove);
+  server.on("/rename", HTTP_POST, handleRename);
   server.on("/rescan", HTTP_POST, handleRescan);
   server.on("/led-toggle", HTTP_POST, handleLedToggle);
   server.on("/dxf2svg.js", HTTP_GET, handleDxfScript);

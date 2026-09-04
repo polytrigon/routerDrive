@@ -107,8 +107,10 @@ button:disabled:active {
    primary actions (Upload, Convert & upload). */
 #deleteBtn,
 #moveBtn,
+#renameBtn,
 #confirmMoveBtn,
 #cancelMoveBtn,
+#confirmRenameBtn,
 #applyToSelectedBtn {
   padding: .4em .9em;
   font-size: .85em;
@@ -391,4 +393,25 @@ footer p:first-child {
   height: .8em;
   border-radius: 2px;
   flex: 0 0 auto;
+}
+
+/* Rename dialog (file list "Rename" -> #renameOverlay). Reuses the same
+   .modal-overlay/.modal-box shell as the cut editor; only the per-file
+   rows inside need their own rules. Narrower than the cut editor's box -
+   it's a list of short text fields, not a drawing. */
+.rename-box {
+  max-width: 480px;
+}
+
+/* One row per selected file: the current name as a small caption above
+   the field you type the new one into, so it stays obvious which field
+   belongs to which file when several are being renamed at once. */
+.rename-row {
+  margin-bottom: .9em;
+}
+
+.rename-row label {
+  display: block;
+  margin-bottom: .2em;
+  word-break: break-all;
 }
