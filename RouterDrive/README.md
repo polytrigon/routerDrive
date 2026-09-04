@@ -447,9 +447,46 @@ Leave the cut type dropdown on "unchanged" and the depth/tool diameter
 fields blank to upload a file exactly as-is (the pre-existing behavior) -
 useful if a file already has its own per-shape cut types you don't want
 overwritten, e.g. one you exported from Origin itself. Whichever values
-you do pick apply uniformly to every shape in that upload; there's no
-per-shape control from this UI (Origin's own touchscreen still does that,
-same as always).
+you do pick here apply uniformly to every shape in that upload - this is
+still a whole-file, one-type choice. To give individual lines within a
+single file their own cut type (a box within a box, say, where the outer
+line is an Inside cut and the inner one is a Pocket), upload the file
+first and then use the file list's per-line editor - see "Editing
+individual lines' cut type" below.
+
+## Editing individual lines' cut type
+
+Sometimes one file needs more than one cut type - the classic case is a
+box-within-a-box design, where the outer line should be cut all the way
+through (Inside) and the inner one should be a shallower Pocket. The
+Upload section's cut type dropdown (above) can only apply one type to an
+entire file, so for this, upload the file first (leave cut type
+"unchanged," or set whatever the majority of lines should be - either
+way, you can change any of it after), then click that file's **Cut
+type** cell in the file list.
+
+Clicking it opens an editor showing the file's actual SVG, rendered right
+in the browser. Click a line to select it (its outline turns cyan);
+shift-click to add more lines to the selection so you can set several at
+once. With something selected, pick a **Cut type** in the side panel
+(same Outside/Inside/Pocket/On Line/Guide choices as the Upload section,
+plus **Tool diameter** and **Cut depth** for the types that need them),
+then click **Apply to selected** - the selected lines are recolored to
+match their new cut type (a small legend in the panel shows which color
+means what) so you can see at a glance what's been set and what hasn't
+(unset lines stay black). Repeat for as many different lines/cut types
+as the design needs, then click **Save changes** to write the whole
+file back to the device - this re-uploads it over the original (same
+mechanism as a normal upload, so it goes through the same brief USB-mode
+switch as any other write).
+
+Nothing is written to the device until you click **Save changes** -
+closing the editor (the **Close**/**Cancel** buttons) without saving
+asks you to confirm first if you've applied anything. Once a file has
+more than one cut type on it (either from this editor, or because it was
+uploaded with cut type "unchanged" and already had mixed types baked in
+from wherever it came from), its **Cut type** column shows **Mixed**
+instead of a single type - see "The file list" below.
 
 ## Folders
 
@@ -536,11 +573,17 @@ as "-" instead of guessing.
 The **Cut type** and **Bit size** columns read straight off each file's
 own `shaper:cutType`/`shaper:toolDia` attributes (see "Cut type & cut
 depth" above) - RouterDrive doesn't keep a separate database of what you
-uploaded, it just peeks at the first shape in the file itself, since the
-upload feature always applies one chosen type to the whole file anyway.
-A file that was uploaded with cut type left "unchanged" (or that never
-went through this UI's cut-type feature at all - e.g. a hand-edited SVG)
-shows "-" in both columns rather than guessing.
+uploaded, it peeks at the file's own content instead. If every shape in
+the file agrees on one cut type, that's what shows; if they don't (either
+because you gave individual lines different types with the per-line
+editor - see "Editing individual lines' cut type" above - or because the
+file already had more than one cut type baked in when it arrived, e.g.
+uploaded with cut type left "unchanged"), the column shows **Mixed**
+instead of guessing which one to display. A file that never went through
+either the upload cut-type feature or the per-line editor - e.g. a
+hand-edited SVG with no `shaper:` attributes at all - shows "-" in both
+columns. The **Cut type** cell is itself a button: click it (whatever it
+currently shows) to open the per-line editor for that file.
 
 Once there are more than 10 files (`FILES_PER_PAGE` in `config.h`), a
 search box and Prev/Next pager appear above the table so the list stays
@@ -585,15 +628,36 @@ usable instead of growing into one long scroll.
 - The file list's **Cut type**/**Bit size** columns read each file's
   `shaper:cutType`/`shaper:toolDia` attributes straight off a bounded
   scan of the file's own content (up to 4KB from the front of the file -
-  see `readShaperInfo()` in `web_server.cpp`), done once per file while
-  the folder listing is already built. Verified with a standalone C++
-  test of the extraction logic against realistic and edge-case SVG
+  see `readShaperInfo()`/`scanAttrMixed()` in `web_server.cpp`), done
+  once per file while the folder listing is already built - this is also
+  how "Mixed" gets detected (more than one distinct value found within
+  that same 4KB window). Verified with a standalone C++ test of the
+  extraction/mixed-detection logic against realistic and edge-case SVG
   content (no shaper attributes at all, On Line/Guide with no toolDia,
-  multiple shapes), but not yet run against a real uploaded file on the
-  device - if a file's first shape has an unusually long `d` attribute
-  (a very complex tessellated curve) ahead of its `shaper:*` attributes,
-  the 4KB scan could miss them and show "-" instead of the real values;
+  multiple shapes agreeing and disagreeing), but not yet run against a
+  real uploaded file on the device - if a file's first shape has an
+  unusually long `d` attribute (a very complex tessellated curve) ahead
+  of its `shaper:*` attributes, the 4KB scan could miss later, differing
+  values entirely and under-report "Mixed" as a single type (or "-");
   worth watching for on a folder with genuinely complex geometry.
+- The per-line cut editor (see "Editing individual lines' cut type"
+  above) is new this session and entirely unverified on real hardware -
+  Playwright-tested against the real extracted page script (opening a
+  fetched SVG, clicking to select single and multiple lines, applying a
+  cut type/depth/tool diameter to the selection, the "Mixed" round trip
+  end to end) and screenshot-checked for layout, but every actual byte
+  it writes still goes through the same `/upload` endpoint a normal
+  upload does, so confirm on the device that a file edited this way
+  imports into the Origin with the right per-line cut types before
+  relying on it for a real job. It also adds a new `GET /svg` route
+  (`handleGetSvg()` in `web_server.cpp`) that reads a stored file's
+  entire content into memory and serves it back to the browser - unlike
+  every other per-file read in this app, which deliberately caps itself
+  at 4KB to protect the ESP32's limited SRAM, this one reads the whole
+  file since it only ever runs for one file at a time, on demand. No
+  ESP32 toolchain is available where this was built, so neither the
+  route itself nor that memory tradeoff has been exercised on real
+  hardware yet - watch for it failing on an unusually large SVG.
 - Very rarely, restarting RouterDrive while it's plugged into the Origin
   has shown the drive briefly enumerate (Origin shows "No files found",
   meaning it did mount it) and then drop out again (back to "No USB drive

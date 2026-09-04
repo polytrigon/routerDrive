@@ -196,31 +196,55 @@ struct FileEntry {
   String toolDia;  // raw shaper:toolDia value, e.g. "0.25 in"
 };
 
-// Every shape this app writes shaper:* attributes onto carries the same
-// cutType/toolDia - applyShaperMetadata() in the page script applies one
-// chosen type to the whole file (see architecture doc), so whichever
-// occurrence comes first in the file represents the whole thing. Not a
-// full XML parser: this app controls the exact attribute syntax it
-// writes, so a bounded plain-text scan for '<name>="value"' is enough -
-// avoids pulling in an XML library just to look up two strings. Kept
-// deliberately small (not "read the whole file") since this runs once
-// per file while building the folder listing, on a board with limited
-// SRAM already under pressure from Wi-Fi/WebServer buffers - a large
-// heap allocation here, repeated per file, is a worse tradeoff than
-// occasionally missing the columns on a file whose first shape has an
-// unusually long "d" attribute (lots of tessellated points) ahead of
-// its shaper:* attributes; those files just show "-" in Cut type/Bit
+// Every shape this app writes shaper:* attributes onto used to carry the
+// same cutType/toolDia, back when applyShaperMetadata() only ever applied
+// one chosen type to the whole file - but a file can now legitimately
+// carry different values per shape: either edited per-line through the
+// file list's cut editor, or uploaded straight from a real Origin export
+// (which already varies cutType per path) with the upload form's own
+// cutType left "unchanged" so nothing overwrote it. So this scans for
+// every occurrence of the attribute within the same bounded window,
+// rather than stopping at the first, and reports "mixed" the moment a
+// second, differing value shows up. Not a full XML parser: this app
+// controls the exact attribute syntax it writes, so a bounded plain-text
+// scan for '<name>="value"' is enough - avoids pulling in an XML library
+// just to look up two strings. Kept deliberately small (not "read the
+// whole file") since this runs once per file while building the folder
+// listing, on a board with limited SRAM already under pressure from
+// Wi-Fi/WebServer buffers - a large heap allocation here, repeated per
+// file, is a worse tradeoff than occasionally missing (or under-
+// reporting "mixed" for) a file whose relevant attributes sit further in
+// than this window reaches; those files just show "-" in Cut type/Bit
 // size, same as a file that never went through the cut-type feature.
 static const size_t SHAPER_SCAN_LIMIT = 4096;
 
-static String extractQuotedAttr(const String &hay, const String &attrName) {
+// Scans hay for every occurrence of attrName="..." and reports whether
+// two or more of them hold differing non-blank values. firstValue is set
+// to whichever value is found first regardless of the mixed result, so
+// callers get a usable single value in the common (non-mixed) case for
+// free. Returns as soon as one differing value is found rather than
+// counting every occurrence - the caller only needs to know "mixed or
+// not", not how many distinct values there are.
+static bool scanAttrMixed(const String &hay, const String &attrName, String &firstValue) {
+  firstValue = "";
   String needle = attrName + "=\"";
-  int idx = hay.indexOf(needle);
-  if (idx < 0) return "";
-  int start = idx + needle.length();
-  int end = hay.indexOf('"', start);
-  if (end < 0) return "";
-  return hay.substring(start, end);
+  int searchFrom = 0;
+  while (true) {
+    int idx = hay.indexOf(needle, searchFrom);
+    if (idx < 0) break;
+    int start = idx + needle.length();
+    int end = hay.indexOf('"', start);
+    if (end < 0) break;
+    String val = hay.substring(start, end);
+    searchFrom = end + 1;
+    if (val.length() == 0) continue;
+    if (firstValue.length() == 0) {
+      firstValue = val;
+    } else if (val != firstValue) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Reads up to SHAPER_SCAN_LIMIT bytes from the front of an already-open
@@ -228,7 +252,12 @@ static String extractQuotedAttr(const String &hay, const String &attrName) {
 // other read on the same handle, and before the handle is closed) and
 // pulls out shaper:cutType/shaper:toolDia if present. A plain SVG never
 // run through the cut-type feature (or uploaded with cut type left
-// "unchanged") leaves both blank - the file list shows "-" for those.
+// "unchanged" AND never edited per-line) leaves both blank - the file
+// list shows "-" for those. cutType comes back as the sentinel raw value
+// "mixed" (see cutTypeLabel()) when more than one distinct shaper:cutType
+// value is present; toolDia comes back as the literal display string
+// "Mixed" directly, since (unlike cutType) it's shown as-is with no
+// separate label-mapping step.
 static void readShaperInfo(File &f, String &cutType, String &toolDia) {
   cutType = "";
   toolDia = "";
@@ -240,13 +269,18 @@ static void readShaperInfo(File &f, String &cutType, String &toolDia) {
   buf[n] = '\0';
   String content(buf);
   delete[] buf;
-  cutType = extractQuotedAttr(content, "shaper:cutType");
-  toolDia = extractQuotedAttr(content, "shaper:toolDia");
+  bool cutTypeMixed = scanAttrMixed(content, "shaper:cutType", cutType);
+  bool toolDiaMixed = scanAttrMixed(content, "shaper:toolDia", toolDia);
+  if (cutTypeMixed) cutType = "mixed";
+  if (toolDiaMixed) toolDia = "Mixed";
 }
 
 // Display label for the file list's Cut type column - mirrors the Upload
-// section's cutType <select> option text exactly (see renderPage()).
+// section's cutType <select> option text exactly (see renderPage()), plus
+// the "mixed" sentinel readShaperInfo() sets when a file's shapes don't
+// all agree on one cut type.
 static String cutTypeLabel(const String &raw) {
+  if (raw == "mixed") return "Mixed";
   if (raw == "outside") return "Outside";
   if (raw == "inside") return "Inside";
   if (raw == "pocket") return "Pocket";
@@ -458,7 +492,9 @@ static String renderFilesSection() {
       String checkmark = isNew ? " <span style='color:#0a0' title='Just uploaded'>&#10003;</span>" : "";
       html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
       html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
-              "<td>" + cutTypeLabel(e.cutType) + "</td><td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : "-") + "</td></tr>";
+              "<td><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
+              "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td>"
+              "<td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : "-") + "</td></tr>";
     }
   }
   html += "<tr><td colspan=6 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
@@ -769,6 +805,79 @@ static String renderPage() {
 
   html += renderWifiSection();
 
+  // Per-line cut editor: hidden by default, opened from a "Cut type" cell
+  // button in the file list above (see cutTypeCell/openCutEditorFromBtn).
+  // Fetches the real file's SVG from the new /svg route, renders it, and
+  // lets the user click individual paths to give them their own cut
+  // type/depth/tool diameter instead of the whole-file value the Upload
+  // section's own controls apply. Static markup - openCutEditor() fills
+  // in the title and injects the fetched SVG at open time.
+  html += "<div id='cutEditorOverlay' class='modal-overlay' style='display:none'>"
+          "<div class='modal-box cut-editor'>"
+          "<div class='cut-editor-header'>"
+          "<h3 id='cutEditorTitle'>Edit cut types</h3>"
+          "<button type='button' class='link-btn' onclick='closeCutEditor()'>Close</button>"
+          "</div>"
+          "<p class='sub'>Click a line to select it. Shift-click to select more than one. Everything "
+          "you select shares whatever you set below.</p>"
+          "<div class='cut-editor-body'>"
+          "<div id='cutEditorSvgWrap' class='cut-editor-svg-wrap'><p class='sub'>Loading...</p></div>"
+          "<div class='cut-editor-panel'>"
+          "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
+          "<select id='editCutType' class='full-width' onchange='toggleEditToolDiaWrap()'>"
+          "<option value='' selected>Cut type: choose one</option>"
+          "<option value='outside'>Cut type: Outside</option>"
+          "<option value='inside'>Cut type: Inside</option>"
+          "<option value='pocket'>Cut type: Pocket</option>"
+          "<option value='online'>Cut type: On Line</option>"
+          "<option value='guide'>Cut type: Guide</option>"
+          "</select>"
+          "<br><br>"
+          "<div id='editToolDiaWrap' style='display:none'>"
+          "<select id='editToolDiaPreset' class='full-width' onchange='handleEditToolDiaPresetChange()'>"
+          "<option value='' selected>Tool diameter: choose one (required)</option>"
+          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
+          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
+          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
+          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
+          "<option value='3|mm'>Tool diameter: 3 mm</option>"
+          "<option value='6|mm'>Tool diameter: 6 mm</option>"
+          "<option value='8|mm'>Tool diameter: 8 mm</option>"
+          "<option value='10|mm'>Tool diameter: 10 mm</option>"
+          "<option value='__custom__'>Tool diameter: Custom...</option>"
+          "</select>"
+          "<br><br>"
+          "<div id='editToolDiaCustomWrap' style='display:none'>"
+          "<div class='depth-row'>"
+          "<input type='number' id='editToolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
+          "<select id='editToolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
+          "</div>"
+          "<br><br>"
+          "</div>"
+          "</div>"
+          "<div class='depth-row'>"
+          "<input type='number' id='editDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
+          "<select id='editDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
+          "</div>"
+          "<br>"
+          "<button type='button' id='applyToSelectedBtn' disabled onclick='applyToSelectedShapes()'>Apply to selected</button>"
+          "<div class='cut-legend'>"
+          "<div><span class='swatch' style='background:#1437c9'></span>Outside</div>"
+          "<div><span class='swatch' style='background:#0a8a3f'></span>Inside</div>"
+          "<div><span class='swatch' style='background:#8a2be2'></span>Pocket</div>"
+          "<div><span class='swatch' style='background:#888'></span>On Line</div>"
+          "<div><span class='swatch' style='background:#c9950a'></span>Guide</div>"
+          "<div><span class='swatch' style='background:#000'></span>Not set yet</div>"
+          "<div><span class='swatch' style='background:#00b8ff'></span>Selected</div>"
+          "</div>"
+          "</div>" // .cut-editor-panel
+          "</div>" // .cut-editor-body
+          "<p id='cutEditorStatus' class='sub'></p>"
+          "<button type='button' id='saveCutEditorBtn' onclick='saveCutEditor()'>Save changes</button> "
+          "<button type='button' class='link-btn' onclick='closeCutEditor()'>Cancel</button>"
+          "</div>" // .cut-editor
+          "</div>"; // .modal-overlay
+
   html += "<script src='/dxf2svg.js'></script>";
   html += "<script>"
           "function toggleAllFiles(cb) {"
@@ -896,6 +1005,227 @@ static String renderPage() {
           "}"
           "}"
           "return new XMLSerializer().serializeToString(doc);"
+          "}"
+          // -----------------------------------------------------------
+          // Per-line cut editor (file list "Cut type" cell -> modal).
+          // Lets the user open an already-uploaded file, click individual
+          // paths, and give the selection its own cut type/depth/tool
+          // diameter - independent of the Upload section's whole-file
+          // applyShaperMetadata() above, which this deliberately does not
+          // touch or reuse (it writes every shape uniformly; this writes
+          // only the current selection). Saving re-POSTs the edited SVG
+          // to the same, already-hardware-tested /upload route (same
+          // filename + folder, so it overwrites in place) rather than a
+          // new save endpoint.
+          // -----------------------------------------------------------
+          "var EDITOR_SHAPER_NS = 'http://www.shapertools.com/namespaces/shaper';"
+          "var EDITOR_XMLNS_NS = 'http://www.w3.org/2000/xmlns/';"
+          "var EDITOR_CUT_COLORS = {outside: '#1437c9', inside: '#0a8a3f', pocket: '#8a2be2', online: '#888', guide: '#c9950a'};"
+          "var EDITOR_UNSET_COLOR = '#000';"
+          "var EDITOR_SELECT_COLOR = '#00b8ff';"
+          "var cutEditorState = {name: '', folder: '', svgEl: null, selected: [], dirty: false};"
+          "function openCutEditorFromBtn(btn) {"
+          "openCutEditor(btn.getAttribute('data-name'), btn.getAttribute('data-dir'));"
+          "}"
+          "function openCutEditor(name, folder) {"
+          "cutEditorState = {name: name, folder: folder, svgEl: null, selected: [], dirty: false};"
+          "document.getElementById('cutEditorTitle').textContent = 'Edit cut types: ' + name;"
+          "document.getElementById('cutEditorSvgWrap').innerHTML = '<p class=\"sub\">Loading...</p>';"
+          "document.getElementById('cutEditorStatus').textContent = '';"
+          "document.getElementById('editCutType').value = '';"
+          "toggleEditToolDiaWrap();"
+          "updateSelectionSummary();"
+          "document.getElementById('cutEditorOverlay').style.display = 'flex';"
+          "var url = '/svg?name=' + encodeURIComponent(name) + (folder ? '&dir=' + encodeURIComponent(folder) : '');"
+          "fetch(url).then(function(r) {"
+          "if (!r.ok) throw new Error('Could not load file (HTTP ' + r.status + ')');"
+          "return r.text();"
+          "}).then(function(text) {"
+          "var doc = new DOMParser().parseFromString(text, 'image/svg+xml');"
+          "if (doc.querySelector('parsererror')) throw new Error('Could not parse this file as SVG.');"
+          "var svgEl = doc.documentElement;"
+          "svgEl.setAttributeNS(EDITOR_XMLNS_NS, 'xmlns:shaper', EDITOR_SHAPER_NS);"
+          "svgEl.removeAttribute('width');"
+          "svgEl.removeAttribute('height');"
+          "svgEl.style.width = '100%';"
+          "svgEl.style.height = 'auto';"
+          "svgEl.style.maxHeight = '55vh';"
+          "svgEl.style.display = 'block';"
+          "var wrap = document.getElementById('cutEditorSvgWrap');"
+          "wrap.innerHTML = '';"
+          "wrap.appendChild(svgEl);"
+          // Note: appendChild() here *moves* svgEl out of the parsed
+          // `doc` and into the live page - `doc` is left hollow after
+          // this (no documentElement), so anything that needs to
+          // serialize the edited SVG later (see saveCutEditor()) must
+          // clone svgEl itself, not this now-empty doc.
+          "cutEditorState.svgEl = svgEl;"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "for (var i = 0; i < shapes.length; i++) cutEditorInitShape(shapes[i]);"
+          "}).catch(function(err) {"
+          "document.getElementById('cutEditorSvgWrap').innerHTML = '<p style=\"color:#b00\">' + err.message + '</p>';"
+          "});"
+          "}"
+          // A thin, unfilled cut line is a poor click target - only the
+          // stroke pixels themselves are hit-testable by default, and the
+          // hollow interior of a closed shape like a box is empty space
+          // that falls through to whatever's behind it. So each real shape
+          // gets an invisible, much-wider clone layered directly on top,
+          // used only for hit-testing - the visible shape underneath stays
+          // thin and correctly colored, while clicking anywhere near the
+          // line (not just exactly on its thin pixel) selects it. The
+          // clone is marked data-hit-proxy so saveCutEditor() can leave it
+          // out of what actually gets written to the file.
+          "function cutEditorInitShape(el) {"
+          "el.style.fill = 'none';"
+          "cutEditorRecolor(el);"
+          "var hit = el.cloneNode(false);"
+          "hit.setAttribute('data-hit-proxy', '1');"
+          "hit.style.fill = 'none';"
+          "hit.style.stroke = 'transparent';"
+          "hit.style.strokeWidth = '14';"
+          "hit.style.pointerEvents = 'stroke';"
+          "hit.style.cursor = 'pointer';"
+          "hit.addEventListener('click', function(ev) {"
+          "ev.stopPropagation();"
+          "cutEditorToggleSelect(el, ev.shiftKey);"
+          "});"
+          "el.parentNode.insertBefore(hit, el.nextSibling);"
+          "}"
+          "function cutEditorCutTypeOf(el) {"
+          "return el.getAttributeNS(EDITOR_SHAPER_NS, 'cutType') || '';"
+          "}"
+          "function cutEditorRecolor(el) {"
+          "var isSelected = cutEditorState.selected.indexOf(el) >= 0;"
+          "if (isSelected) {"
+          "el.style.stroke = EDITOR_SELECT_COLOR;"
+          "el.style.strokeWidth = '4';"
+          "el.style.strokeDasharray = '6,3';"
+          "} else {"
+          "var ct = cutEditorCutTypeOf(el);"
+          "el.style.stroke = EDITOR_CUT_COLORS[ct] || EDITOR_UNSET_COLOR;"
+          "el.style.strokeWidth = '2';"
+          "el.style.strokeDasharray = '';"
+          "}"
+          "}"
+          "function cutEditorToggleSelect(el, additive) {"
+          "var idx = cutEditorState.selected.indexOf(el);"
+          "if (!additive) {"
+          "var wasOnlySelected = (idx >= 0 && cutEditorState.selected.length === 1);"
+          "var prev = cutEditorState.selected;"
+          "cutEditorState.selected = [];"
+          "for (var i = 0; i < prev.length; i++) cutEditorRecolor(prev[i]);"
+          "if (!wasOnlySelected) cutEditorState.selected.push(el);"
+          "} else if (idx >= 0) {"
+          "cutEditorState.selected.splice(idx, 1);"
+          "} else {"
+          "cutEditorState.selected.push(el);"
+          "}"
+          "cutEditorRecolor(el);"
+          "updateSelectionSummary();"
+          "}"
+          "function updateSelectionSummary() {"
+          "var n = cutEditorState.selected.length;"
+          "document.getElementById('cutEditorSelCount').textContent = n === 0 ? 'No line selected.' : (n + ' line(s) selected.');"
+          "var applyBtn = document.getElementById('applyToSelectedBtn');"
+          "if (applyBtn) applyBtn.disabled = (n === 0);"
+          "if (n > 0) {"
+          "var el = cutEditorState.selected[0];"
+          "document.getElementById('editCutType').value = cutEditorCutTypeOf(el);"
+          "var depth = el.getAttributeNS(EDITOR_SHAPER_NS, 'cutDepth') || '';"
+          "var depthParts = depth.split(' ');"
+          "document.getElementById('editDepth').value = depthParts[0] || '';"
+          "if (depthParts[1]) document.getElementById('editDepthUnit').value = depthParts[1];"
+          "toggleEditToolDiaWrap();"
+          "}"
+          "}"
+          "function toggleEditToolDiaWrap() {"
+          "var ct = document.getElementById('editCutType').value;"
+          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
+          "document.getElementById('editToolDiaWrap').style.display = needsOffset ? '' : 'none';"
+          "}"
+          "function handleEditToolDiaPresetChange() {"
+          "var isCustom = document.getElementById('editToolDiaPreset').value === '__custom__';"
+          "document.getElementById('editToolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
+          "}"
+          "function applyToSelectedShapes() {"
+          "var cutType = document.getElementById('editCutType').value;"
+          "if (!cutType) { alert('Choose a cut type first.'); return; }"
+          "if (cutEditorState.selected.length === 0) { alert('Select at least one line first.'); return; }"
+          "var depthVal = document.getElementById('editDepth').value;"
+          "var depthUnit = document.getElementById('editDepthUnit').value;"
+          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
+          "var toolDiaVal = '', toolDiaUnit = 'mm';"
+          "if (needsOffset) {"
+          "var preset = document.getElementById('editToolDiaPreset').value;"
+          "if (preset === '__custom__') {"
+          "toolDiaVal = document.getElementById('editToolDiaCustom').value;"
+          "toolDiaUnit = document.getElementById('editToolDiaUnit').value;"
+          "} else if (preset) {"
+          "var presetParts = preset.split('|');"
+          "toolDiaVal = presetParts[0];"
+          "toolDiaUnit = presetParts[1];"
+          "}"
+          "if (!toolDiaVal || isNaN(parseFloat(toolDiaVal))) {"
+          "alert('Outside/Inside/Pocket cuts need a tool diameter.');"
+          "return;"
+          "}"
+          "}"
+          "var depthAttr = null;"
+          "if (depthVal !== '' && !isNaN(parseFloat(depthVal))) depthAttr = parseFloat(depthVal) + ' ' + depthUnit;"
+          "var toolDiaAttr = needsOffset ? (parseFloat(toolDiaVal) + ' ' + toolDiaUnit) : null;"
+          "var sel = cutEditorState.selected.slice();"
+          "for (var i = 0; i < sel.length; i++) {"
+          "var el = sel[i];"
+          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutType', cutType);"
+          "if (depthAttr) el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutDepth', depthAttr);"
+          "if (toolDiaAttr) {"
+          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
+          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
+          "} else {"
+          "el.removeAttributeNS(EDITOR_SHAPER_NS, 'toolDia');"
+          "el.removeAttributeNS(EDITOR_SHAPER_NS, 'cutOffset');"
+          "}"
+          "}"
+          "cutEditorState.selected = [];"
+          "for (var j = 0; j < sel.length; j++) cutEditorRecolor(sel[j]);"
+          "cutEditorState.dirty = true;"
+          "document.getElementById('cutEditorStatus').textContent = 'Applied to ' + sel.length + ' line(s) - click Save changes to write this to the file.';"
+          "updateSelectionSummary();"
+          "}"
+          "function closeCutEditor() {"
+          "if (cutEditorState.dirty && !confirm('Discard unsaved changes?')) return;"
+          "document.getElementById('cutEditorOverlay').style.display = 'none';"
+          "}"
+          "async function saveCutEditor() {"
+          "if (!cutEditorState.svgEl) return;"
+          "var status = document.getElementById('cutEditorStatus');"
+          "status.textContent = 'Saving...';"
+          // Serialize a clone of the live svgEl (not svgEl itself, and not
+          // the original parsed document - openCutEditor()'s appendChild()
+          // already emptied that out, see the comment there), so the
+          // hit-testing proxies (see cutEditorInitShape()) never end up
+          // written into the actual file, but also so the live editor
+          // stays fully functional (proxies intact) if this save attempt
+          // fails and the user wants to try again without reopening.
+          "var cloneEl = cutEditorState.svgEl.cloneNode(true);"
+          "var proxies = cloneEl.querySelectorAll('[data-hit-proxy]');"
+          "for (var i = 0; i < proxies.length; i++) proxies[i].parentNode.removeChild(proxies[i]);"
+          "var svgText = new XMLSerializer().serializeToString(cloneEl);"
+          "var fd = new FormData();"
+          "fd.append('file', new Blob([svgText], {type: 'image/svg+xml'}), cutEditorState.name);"
+          "try {"
+          "var resp = await fetch('/upload?folder=' + encodeURIComponent(cutEditorState.folder), {method: 'POST', body: fd});"
+          "if (resp.ok) {"
+          "status.textContent = 'Saved. Reloading...';"
+          "cutEditorState.dirty = false;"
+          "setTimeout(function() { location.reload(); }, 700);"
+          "} else {"
+          "status.textContent = 'Save failed (HTTP ' + resp.status + ').';"
+          "}"
+          "} catch (err) {"
+          "status.textContent = 'Save failed (' + err.message + ').';"
+          "}"
           "}"
           "document.getElementById('uploadBtn').addEventListener('click', async function() {"
           "var fileInput = document.getElementById('uploadFile');"
@@ -1434,6 +1764,47 @@ static void handleStyleCss() {
   server.send_P(200, "text/css", STYLE_CSS_SOURCE);
 }
 
+// Serves a stored file's full raw SVG content so the file list's per-line
+// cut editor (see the Cut type column in renderFilesSection()) can fetch
+// and render it client-side. Unlike readShaperInfo()'s deliberately
+// bounded SHAPER_SCAN_LIMIT peek (which runs once per file while building
+// an entire folder listing - many files at once), this reads a file's
+// whole content - acceptable here because it only ever runs for one file
+// at a time, on demand, when a user explicitly opens that file's editor,
+// not once per row in a listing. A pathologically large SVG could still
+// fail the single heap allocation below on this board's limited SRAM;
+// worth watching for on hardware with very complex/dense geometry (same
+// caveat class as the 4KB scan cap above).
+static void handleGetSvg() {
+  String name = server.hasArg("name") ? basenameOf(server.arg("name")) : "";
+  String folder = server.hasArg("dir") ? server.arg("dir") : "";
+  if (folder.length() > 0 && !isValidFolderName(folder)) folder = "";
+  if (name.length() == 0) {
+    server.send(400, "text/plain", "Missing name");
+    return;
+  }
+  if (!storageBeginAppAccess()) {
+    server.send(503, "text/plain", "Could not access storage");
+    return;
+  }
+  File f = FFat.open(joinFolder(folder, name), FILE_READ);
+  if (!f || f.isDirectory()) {
+    if (f) f.close();
+    storageEndAppAccess(false);
+    server.send(404, "text/plain", "Not found");
+    return;
+  }
+  size_t sz = f.size();
+  char *buf = new char[sz + 1];
+  size_t n = f.read((uint8_t *)buf, sz);
+  buf[n] = '\0';
+  String content(buf);
+  delete[] buf;
+  f.close();
+  storageEndAppAccess(false); // just reading, nothing changed - no need to nudge the host
+  server.send(200, "image/svg+xml", content);
+}
+
 static void handleNotFound() {
   // Captive-portal-friendly: send everything unknown back to "/" so phones
   // and laptops pop the "sign in to network" prompt during AP/setup mode.
@@ -1453,6 +1824,7 @@ void webServerInit() {
   server.on("/led-toggle", HTTP_POST, handleLedToggle);
   server.on("/dxf2svg.js", HTTP_GET, handleDxfScript);
   server.on("/style.css", HTTP_GET, handleStyleCss);
+  server.on("/svg", HTTP_GET, handleGetSvg);
   server.on("/wifi", HTTP_POST, handleWifiSave);
   server.on("/wifi-reset", HTTP_POST, handleWifiReset);
   server.on("/scan", HTTP_GET, handleScan);

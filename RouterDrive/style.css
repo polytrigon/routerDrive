@@ -108,7 +108,8 @@ button:disabled:active {
 #deleteBtn,
 #moveBtn,
 #confirmMoveBtn,
-#cancelMoveBtn {
+#cancelMoveBtn,
+#applyToSelectedBtn {
   padding: .4em .9em;
   font-size: .85em;
 }
@@ -285,4 +286,95 @@ footer p:first-child {
   align-items: center;
   flex-wrap: wrap;
   gap: .5em;
+}
+
+/* Per-line cut editor modal, opened from a file list "Cut type" cell (see
+   cutTypeCell/openCutEditorFromBtn in the page script). Same "dark
+   backdrop + centered white box" shape as any standard modal - kept
+   generic (.modal-overlay/.modal-box) in case a future feature wants a
+   second dialog on this page, with .cut-editor-* for the pieces specific
+   to this one. Hidden by default in markup (style='display:none');
+   openCutEditor()/closeCutEditor() toggle it to/from 'flex' so the
+   centering below actually applies. */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .5);
+  align-items: center;
+  justify-content: center;
+  padding: 1em;
+  box-sizing: border-box;
+  z-index: 100;
+}
+
+.modal-box {
+  background: #fff;
+  border-radius: 10px;
+  padding: 1.2em;
+  width: 100%;
+  max-width: 900px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.cut-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1em;
+}
+
+.cut-editor-header h3 {
+  margin: 0;
+}
+
+.cut-editor-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  margin-top: .5em;
+}
+
+/* The rendered SVG itself (injected by openCutEditor()) sizes to this
+   pane via width:100%/height:auto set directly on the <svg> element - see
+   the page script - so it scales down to fit regardless of the source
+   drawing's own dimensions. */
+.cut-editor-svg-wrap {
+  flex: 3 1 300px;
+  min-width: 260px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  padding: .5em;
+  box-sizing: border-box;
+}
+
+.cut-editor-panel {
+  flex: 1 1 220px;
+  min-width: 220px;
+  max-width: 260px;
+  box-sizing: border-box;
+}
+
+.cut-legend {
+  margin-top: 1em;
+  font-size: .85em;
+  color: #555;
+}
+
+.cut-legend div {
+  display: flex;
+  align-items: center;
+  gap: .4em;
+  margin: .25em 0;
+}
+
+.cut-legend .swatch {
+  display: inline-block;
+  width: .8em;
+  height: .8em;
+  border-radius: 2px;
+  flex: 0 0 auto;
 }
