@@ -30,8 +30,24 @@ Wi-Fi - see [`HOW_TO_USE.md`](HOW_TO_USE.md) instead.
   mounts its own - only ever one live instance, since each caches its
   mapping in RAM and writes state back into the partition. WL's state
   lives in the partition rather than the instance, so whichever side
-  mounts next picks up exactly the mapping the other left behind. See
-  "Known rough edges" for what this replaced and why it mattered.
+  mounts next picks up exactly the mapping the other left behind.
+
+  This is worth understanding before changing anything in `storage.cpp`,
+  because it replaced a bug that looked like working code. The MSC
+  callbacks used to read and write the raw partition
+  (`esp_partition_read/write` at `lba * 4096`) while the filesystem went
+  through WL - two translations over one flash. That behaves perfectly on
+  a lightly written partition, where WL's mapping is still close enough to
+  identity that the two views agree, and then breaks once enough erase
+  cycles have accumulated for the mapping to migrate and the host's view
+  to slide out from under the filesystem. A host-side write would also
+  have gone in behind WL's back, leaving its bookkeeping inconsistent with
+  the data it describes. **The invariant to preserve: both paths address
+  the flash through the same WL handle, and only one WL instance is ever
+  mounted.** `test_storage_modes.cpp` models that state machine - 200
+  access cycles, nested begins, stray ends, and injected mount failures -
+  and is the cheapest way to check a change here without hardware.
+  *Credit to Beau for spotting the original.*
 - **Wi-Fi upload** and **USB exposure** can't literally touch the flash at
   the same instant - that's a hard limitation of how the flash's
   wear-levelled filesystem works, confirmed by Espressif's own USB-MSC
@@ -686,24 +702,6 @@ usable instead of growing into one long scroll.
 
 ## Known rough edges / things to improve next
 
-- **The USB side used to bypass wear levelling, and that's now fixed but
-  not yet hardware-proven.** The MSC callbacks read and wrote the raw
-  partition (`esp_partition_read/write` at `lba * 4096`) while the
-  filesystem went through the wear-levelling layer - two different
-  translations over the same flash. It worked, because on a lightly
-  written partition WL's mapping is close enough to identity that the two
-  views agree, which is exactly what makes it a nasty class of bug: it
-  behaves perfectly until enough erase cycles have accumulated for WL's
-  mapping to migrate, at which point the host's view slides out from under
-  the filesystem. A host-side write would also have gone in behind WL's
-  back, leaving its bookkeeping inconsistent with the data. Both sides now
-  share one WL translation (see "How it works" above). Two related fixes
-  came with it: USB now advertises `wl_size()` (the usable area) instead of
-  the whole raw partition, so the host is no longer shown WL's own
-  bookkeeping at the end of the volume as though it were data - expect the
-  reported capacity to be slightly smaller than before, which is correct -
-  and `onUsbWrite()` now refuses a partial-sector write rather than
-  erasing past what it's replacing. *Credit to Beau for spotting this.*
 - Storage capacity is whatever's left of the XIAO's 8MB flash after the
   firmware itself (roughly ~4-5MB with the included `partitions.csv`) -
   plenty for SVGs, but this isn't a place to also store project photos etc.
