@@ -1075,13 +1075,14 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>";
   html += "<br><br>";
-  // "Default" means a Center anchor for a file that has none, and leave
-  // it alone for a file that already carries its own - so an anchor drawn
-  // in Affinity is never silently replaced by the upload form, where
-  // there would be nowhere to warn about it. Anything else places that
-  // position, replacing whatever was there.
+  // Deliberately just "Default", not "Default (Center)". Center is only
+  // what this does for a file that HASN'T got an anchor; a file that
+  // brought its own keeps it, untouched. Naming Center in the label would
+  // tell someone uploading a carefully placed Affinity anchor that it is
+  // about to be overwritten, which is the opposite of what happens. Also
+  // matches the Cut type dropdown's own "Default" wording.
   html += "<select id='uploadAnchor' class='full-width'>"
-          "<option value='' selected>Anchor: Default (Center)</option>"
+          "<option value='' selected>Anchor: Default</option>"
           "<option value='tl'>Anchor: Top left</option>"
           "<option value='tr'>Anchor: Top right</option>"
           "<option value='bl'>Anchor: Bottom left</option>"

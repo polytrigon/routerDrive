@@ -565,12 +565,16 @@ the same part twice with two different anchor positions and looking at
 what the machine did. The reasoning had been perfectly plausible and
 perfectly wrong, which is now the fourth time on this project.
 
-**The Upload section's Default is a Center anchor**, not "leave the file
-alone" - with one exception that matters: a file that already carries its
-own anchor is left exactly as it is, and in that case the upload isn't
-rewritten at all, so those bytes reach the device unchanged. There is
-nowhere on the upload form to warn about replacing someone's anchor, so
-it doesn't.
+**The Upload section's Default places a Center anchor** on a file that
+hasn't got one - but a file that already carries its own keeps it,
+exactly as it is, and in that case the upload isn't rewritten at all, so
+those bytes reach the device unchanged. There is nowhere on the upload
+form to warn about replacing someone's anchor, so it never does.
+
+The option is labelled just "Anchor: Default" for that reason. Writing
+"Default (Center)" would tell someone uploading a carefully placed
+Affinity anchor that it was about to be overwritten, which is the
+opposite of what happens.
 
 The consequence worth knowing is that a file with no anchor now gets one,
 and there is no longer a "remove" option - Center is treated as the
