@@ -165,12 +165,13 @@ reads **Anchor: Custom Anchor**. Moving between standard positions just
 happens; replacing a hand-drawn one asks first, since that throws away
 where you put it.
 
-This has been tested on a real Origin. An earlier version placed the
-triangle at a different angle depending on which corner you picked, and
-the Origin responded by rotating the whole design 180 degrees for some of
-them. It now uses one angle everywhere, which is the one the machine
-placed correctly. If you ever see a design come out rotated from where
-you expected, that's the thing to report.
+This has been tested on a real Origin, with top left and bottom right
+both placing correctly. An earlier version drew the triangle at a
+different angle depending on which corner you picked, and the Origin
+responded by rotating the whole design 180 degrees for some of them. It
+now uses one angle everywhere - the one the machine placed correctly. If
+you ever see a design come out rotated from where you expected, that's
+the thing to report.
 
 ## Files you set up in another app
 

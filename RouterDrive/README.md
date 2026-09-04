@@ -517,7 +517,7 @@ so declining to overwrite it is right either way. `test_anchor.js` covers
 it, including that the red survives a full save round trip; disabling the
 detector fails six of its checks.
 
-**Placing a standard anchor (UNVERIFIED ON HARDWARE).** The Upload
+**Placing a standard anchor.** The Upload
 section and the cut editor can both write an anchor at a standard
 position - top left/right, bottom left/right, or centre - as the red
 triangle Shaper reads. Deliberately positions only: no drag-and-drop, no
@@ -543,10 +543,18 @@ that turns top-left's orientation into bottom-right's.
 So the Origin reads orientation from the legs and rotates the design
 until the long (Y) leg points up. Orientation is now fixed for every
 position - short leg toward -x, long leg toward -y - and only the vertex
-moves. A consequence worth knowing: at every corner but bottom-right the
-triangle now pokes slightly outside the drawing's bounds. That's fine, it
-isn't cut, and it's the price of one orientation that works everywhere
-instead of four that each have to get lucky.
+moves. **Retested on the machine afterwards: top left now places
+correctly**, alongside bottom right. A consequence worth knowing: at every
+corner but bottom-right the triangle now pokes slightly outside the
+drawing's bounds. That's fine, it isn't cut, and it's the price of one
+orientation that works everywhere instead of four that each have to get
+lucky.
+
+Top right, bottom left and centre have not been put on a machine. They
+should follow by construction - orientation is what the Origin reacted
+to, it is now identical at every position, and only the vertex moves - but
+that is an inference, not a test, and inferences have a poor record on
+this project.
 
 Still open: whether the X leg matters too. Bottom-right works with X
 pointing left, so the Origin evidently tolerates that, but a bottom-left
@@ -563,7 +571,9 @@ Don't "tidy" that into a named colour.
 Worth remembering how this was found: not by reasoning, but by uploading
 the same part twice with two different anchor positions and looking at
 what the machine did. The reasoning had been perfectly plausible and
-perfectly wrong, which is now the fourth time on this project.
+perfectly wrong, which is now the fourth time on this project - after bit
+size, the value format, and the gray baseline. The fix was confirmed the
+same way.
 
 **The Upload section's Default places a Center anchor** on a file that
 hasn't got one - but a file that already carries its own keeps it,
