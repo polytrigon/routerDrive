@@ -1035,12 +1035,12 @@ static String renderPage() {
           "svgEl.setAttributeNS(XMLNS_NS, 'xmlns:shaper', SHAPER_NS);"
           "var depthAttr = null;"
           "if (depthVal !== '' && depthVal !== null && !isNaN(parseFloat(depthVal))) {"
-          "depthAttr = parseFloat(depthVal) + ' ' + depthUnit;"
+          "depthAttr = parseFloat(depthVal) + depthUnit;"
           "}"
           "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
           "var toolDiaAttr = null;"
           "if (needsOffset && toolDiaVal !== '' && toolDiaVal !== null && toolDiaVal !== undefined && !isNaN(parseFloat(toolDiaVal))) {"
-          "toolDiaAttr = parseFloat(toolDiaVal) + ' ' + toolDiaUnit;"
+          "toolDiaAttr = parseFloat(toolDiaVal) + toolDiaUnit;"
           "}"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) {"
@@ -1149,6 +1149,21 @@ static String renderPage() {
           "function cutEditorCutTypeOf(el) {"
           "return el.getAttributeNS(EDITOR_SHAPER_NS, 'cutType') || '';"
           "}"
+          // Splits a written shaper:cutDepth/toolDia value like '0.125in'
+          // into its numeric and unit parts. Written WITHOUT a space
+          // between them (matching Shaper Studio's own export format,
+          // e.g. shaper:toolDia="0.125in" - a real-hardware comparison
+          // against a Shaper Studio export found this app had been
+          // writing "0.125 in" WITH a space instead, which is likely why
+          // saved cut types weren't taking effect on the Origin at all).
+          // Still tolerates an optional space so a file saved by an
+          // older build of this app (before this fix) still reads back
+          // correctly instead of silently losing its depth/tool diameter
+          // display.
+          "function parseValueUnit(str) {"
+          "var m = /^(-?[0-9.]+)\\s*([a-zA-Z]*)$/.exec(str || '');"
+          "return m ? { val: m[1], unit: m[2] } : { val: '', unit: '' };"
+          "}"
           "function cutEditorRecolor(el) {"
           "var isSelected = cutEditorState.selected.indexOf(el) >= 0;"
           "if (isSelected) {"
@@ -1187,21 +1202,21 @@ static String renderPage() {
           "var el = cutEditorState.selected[0];"
           "document.getElementById('editCutType').value = cutEditorCutTypeOf(el);"
           "var depth = el.getAttributeNS(EDITOR_SHAPER_NS, 'cutDepth') || '';"
-          "var depthParts = depth.split(' ');"
-          "document.getElementById('editDepth').value = depthParts[0] || '';"
-          "if (depthParts[1]) document.getElementById('editDepthUnit').value = depthParts[1];"
+          "var depthParsed = parseValueUnit(depth);"
+          "document.getElementById('editDepth').value = depthParsed.val || '';"
+          "if (depthParsed.unit) document.getElementById('editDepthUnit').value = depthParsed.unit;"
           // Pre-fill the tool diameter preset (or the custom row) from
           // this shape's existing shaper:toolDia, the same way depth
           // just did above - this was missing entirely before, so
           // reopening an already-edited shape always showed "choose
           // one" for bit size even though the real value was saved and
           // correct. Matched numerically (parseFloat), not by string,
-          // since a written value like "0.125 in" needs to match a
+          // since a written value like "0.125in" needs to match a
           // preset option written as value='0.125|in'.
           "var toolDia = el.getAttributeNS(EDITOR_SHAPER_NS, 'toolDia') || '';"
-          "var toolDiaParts = toolDia.split(' ');"
-          "var toolDiaNum = toolDiaParts[0] !== undefined ? parseFloat(toolDiaParts[0]) : NaN;"
-          "var toolDiaUnitVal = toolDiaParts[1] || '';"
+          "var toolDiaParsed = parseValueUnit(toolDia);"
+          "var toolDiaNum = toolDiaParsed.val !== '' ? parseFloat(toolDiaParsed.val) : NaN;"
+          "var toolDiaUnitVal = toolDiaParsed.unit || '';"
           "var presetSel = document.getElementById('editToolDiaPreset');"
           "var matchedPreset = '';"
           "if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
@@ -1216,7 +1231,7 @@ static String renderPage() {
           "presetSel.value = matchedPreset;"
           "} else if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
           "presetSel.value = '__custom__';"
-          "document.getElementById('editToolDiaCustom').value = toolDiaParts[0];"
+          "document.getElementById('editToolDiaCustom').value = toolDiaParsed.val;"
           "document.getElementById('editToolDiaUnit').value = toolDiaUnitVal;"
           "} else {"
           "presetSel.value = '';"
@@ -1259,8 +1274,8 @@ static String renderPage() {
           "}"
           "}"
           "var depthAttr = null;"
-          "if (depthVal !== '' && !isNaN(parseFloat(depthVal))) depthAttr = parseFloat(depthVal) + ' ' + depthUnit;"
-          "var toolDiaAttr = needsOffset ? (parseFloat(toolDiaVal) + ' ' + toolDiaUnit) : null;"
+          "if (depthVal !== '' && !isNaN(parseFloat(depthVal))) depthAttr = parseFloat(depthVal) + depthUnit;"
+          "var toolDiaAttr = needsOffset ? (parseFloat(toolDiaVal) + toolDiaUnit) : null;"
           "var sel = cutEditorState.selected.slice();"
           "for (var i = 0; i < sel.length; i++) {"
           "var el = sel[i];"
