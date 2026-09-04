@@ -1026,6 +1026,58 @@ static String renderPage() {
           "var isCustom = document.getElementById('toolDiaPreset').value === '__custom__';"
           "document.getElementById('toolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
           "}"
+          // -----------------------------------------------------------
+          // THE thing that actually makes the Origin honor a cut type.
+          //
+          // Shaper Origin reads cut type from each shape's FILL and
+          // STROKE COLOR - not from the shaper:* namespace attributes.
+          // Shaper's own docs call this "cut type encoding" and say
+          // Origin "accepts color-coded vector shapes indicating cut
+          // types"; their Inkscape guide states plainly that a gray
+          // stroke means an On Line cut and a gray fill means a Pocket
+          // cut. The shaper:* attributes are Shaper Studio's own
+          // metadata (plus the documented shaper:cutDepth override) and
+          // ride along in its exports, but they are NOT what selects the
+          // cut type on the machine.
+          //
+          // This app previously wrote only the shaper:* attributes and
+          // left every path at dxf2svg's default black stroke /
+          // fill:none - which is not a recognized encoding, so the
+          // Origin fell back to its default for every shape no matter
+          // how correct those attributes were. That is why a whole
+          // series of real-hardware tests kept showing "On Line" or
+          // "unset" even after the saved file itself was byte-perfect.
+          //
+          // Verified against a real Shaper Studio export of the user's
+          // own design (testFiles/testPart2_Shaper.svg): its pocket path
+          // carries fill="#7F7F7F" with no stroke, its outside path
+          // fill="#000000" with no stroke, and every untouched path
+          // stroke="#7F7F7F" with fill="none" - matching the table
+          // below exactly. Origin matches these by color, tolerantly
+          // (their gray guide just says "make R, G and B equal"), not by
+          // exact hex, but we write the canonical values Shaper's own
+          // tools emit.
+          "var SHAPER_CUT_COLORS = {"
+          "outside: {fill: '#000000', stroke: 'none'},"
+          "inside: {fill: '#FFFFFF', stroke: '#000000'},"
+          "pocket: {fill: '#7F7F7F', stroke: 'none'},"
+          "online: {fill: 'none', stroke: '#7F7F7F'},"
+          "guide: {fill: 'none', stroke: '#0068FF'}"
+          "};"
+          // Applies that encoding to one shape as real presentation
+          // attributes. Deliberately NOT inline style: the per-line
+          // editor uses inline style for its own on-screen preview
+          // coloring and strips every style="" off the clone before
+          // saving (see saveCutEditor), so writing these as attributes
+          // keeps the preview and the saved-file encoding cleanly
+          // separate - the editor still shows thin colored outlines
+          // while the file itself carries Shaper's real colors.
+          "function applyShaperCutColors(el, cutType) {"
+          "var c = SHAPER_CUT_COLORS[cutType];"
+          "if (!c) return;"
+          "el.setAttribute('fill', c.fill);"
+          "el.setAttribute('stroke', c.stroke);"
+          "}"
           "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, toolDiaVal, toolDiaUnit) {"
           "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
           "if (doc.querySelector('parsererror')) { throw new Error('Could not parse SVG'); }"
@@ -1044,7 +1096,10 @@ static String renderPage() {
           "}"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) {"
-          "if (cutType) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutType', cutType);"
+          "if (cutType) {"
+          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutType', cutType);"
+          "applyShaperCutColors(shapes[i], cutType);"
+          "}"
           "if (depthAttr) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutDepth', depthAttr);"
           "if (toolDiaAttr) {"
           "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
@@ -1280,6 +1335,8 @@ static String renderPage() {
           "for (var i = 0; i < sel.length; i++) {"
           "var el = sel[i];"
           "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutType', cutType);"
+          // The part the Origin actually reads - see applyShaperCutColors.
+          "applyShaperCutColors(el, cutType);"
           "if (depthAttr) el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutDepth', depthAttr);"
           "if (toolDiaAttr) {"
           "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"

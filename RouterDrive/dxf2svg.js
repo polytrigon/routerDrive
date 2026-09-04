@@ -482,7 +482,18 @@
       }
       var d = 'M ' + tpts.map(function (p) { return fmt(p[0]) + ',' + fmt(p[1]); }).join(' L ');
       if (isClosed) d += ' Z';
-      return '<path d="' + d + '" fill="none" stroke="#000" stroke-width="0.1"/>';
+      // Gray stroke + no fill is Shaper Origin's encoding for an "On Line"
+      // cut - the machine picks a shape's cut type from its fill/stroke
+      // COLOR, not from any shaper:* attribute (see applyShaperCutColors()
+      // in web_server.cpp for the full table and the evidence behind it).
+      // This used to emit a black stroke, which isn't a recognized
+      // encoding at all, leaving every converted file's cut type up to
+      // whatever the Origin falls back to. Emitting Shaper's own gray
+      // means a plain converted file now imports unambiguously as all
+      // On Line cuts - exactly what Shaper Studio's own export does for
+      // untouched paths - and anything the user then edits gets its own
+      // color written over this one.
+      return '<path d="' + d + '" fill="none" stroke="#7F7F7F" stroke-width="0.1"/>';
     });
 
     var widthOut = outputUnit === 'in' ? widthMM / 25.4 : widthMM;
