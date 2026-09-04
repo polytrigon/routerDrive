@@ -503,7 +503,7 @@ several things that had to be corrected before this worked at all.
 Reading is still tolerant of the old spaced form, so files saved by
 those builds still reopen correctly.
 
-Leave the cut type dropdown on "unset" and the depth field
+Leave the cut type dropdown on "Default" and the depth field
 blank to upload a file exactly as-is (the pre-existing behavior) -
 useful if a file already has its own per-shape cut types you don't want
 overwritten, e.g. one you exported from Origin itself. Whichever values
@@ -521,7 +521,7 @@ box-within-a-box design, where the outer line should be cut all the way
 through (Inside) and the inner one should be a shallower Pocket. The
 Upload section's cut type dropdown (above) can only apply one type to an
 entire file, so for this, upload the file first (leave cut type
-"unset," or set whatever the majority of lines should be - either
+"Default," or set whatever the majority of lines should be - either
 way, you can change any of it after), then click that file's **Cut
 type** cell in the file list.
 
@@ -543,7 +543,7 @@ Nothing is written to the device until you click **Save changes** -
 closing the editor (the **Close**/**Cancel** buttons) without saving
 asks you to confirm first if you've applied anything. Once a file has
 more than one cut type on it (either from this editor, or because it was
-uploaded with cut type "unset" and already had mixed types baked in
+uploaded with cut type "Default" and already had mixed types baked in
 from wherever it came from), its **Cut type** column shows **Mixed**
 instead of a single type - see "The file list" below.
 
@@ -678,7 +678,7 @@ the file agrees on one cut type, that's what shows; if they don't (either
 because you gave individual lines different types with the per-line
 editor - see "Editing individual lines' cut type" above - or because the
 file already had more than one cut type baked in when it arrived, e.g.
-uploaded with cut type left "unset"), the column shows **Mixed**
+uploaded with cut type left "Default"), the column shows **Mixed**
 instead of guessing which one to display.
 
 Files that carry no `shaper:` attributes at all get a second pass: the
@@ -696,7 +696,7 @@ exactly what the column is for.
 
 One judgement call, and it was made the wrong way round at first: a
 **plain gray stroke reads as On Line**, including on a file the DXF
-converter just produced with cut type left "unset". An earlier version
+converter just produced with cut type left "Default". An earlier version
 treated bare gray as a neutral baseline and reported "Unset" for those,
 on the reasoning that otherwise every unedited upload would be labelled.
 But the column's job is to say what Origin will do with the file, and

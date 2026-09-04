@@ -1050,7 +1050,12 @@ static String renderPage() {
   html += "</select>";
   html += "<br><br>";
   html += "<select id='cutType' class='full-width'>"
-          "<option value='' selected>Cut type: unset</option>"
+          // "Default" rather than "unset": the file list uses "Unset" for a
+          // file with no encoding Origin can read, which is a different
+          // state from this one, and having both say the same word made a
+          // DXF uploaded on "unset" look like it contradicted itself when
+          // it showed up in the list as On Line.
+          "<option value='' selected>Cut type: Default</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
           "<option value='pocket'>Cut type: Pocket</option>"

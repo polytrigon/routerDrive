@@ -36,7 +36,7 @@ file list, then the upload form.
 2. Optionally pick units (mm/inches - only matters for DXF files) and a
    folder to upload into (see "Folders" below).
 3. Optionally set a **Cut type** and **Cut depth** - see "Cut type and
-   depth" below. Leave Cut type on "unset" to skip this and upload the
+   depth" below. Leave Cut type on "Default" to skip this and upload the
    file exactly as converted.
 4. Click **Convert & upload**.
 5. If a file with that name already exists in the target folder, you'll
@@ -62,7 +62,7 @@ knowing before you go hunting for a problem that isn't there.
 
 Above the upload button:
 
-- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "unset."
+- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "Default."
   Whichever you pick applies to *every* line in that upload.
 - **Cut depth**: optional. Leave blank to not set one.
 
@@ -92,7 +92,7 @@ all the way through (Inside), and the inner one should only be a shallow
 Pocket. The upload controls above can't do that - they set one cut type
 for the whole file. For this, use the file list instead:
 
-1. Upload the file first (cut type "unset" is fine, or pick whatever
+1. Upload the file first (cut type "Default" is fine, or pick whatever
    most of the lines should be - you can change any of it next).
 2. In the file list, click that file's **Cut type** cell (whatever it
    currently shows - Unset, a cut type, or Mixed).
@@ -128,7 +128,7 @@ Shaper.
 You don't have to use RouterDrive's editor at all. Origin identifies cut
 types by color, so a file you've already colored correctly in Affinity,
 Illustrator, Inkscape or anything else works as-is - just upload it with
-Cut type left on "unset" and RouterDrive passes it through untouched,
+Cut type left on "Default" and RouterDrive passes it through untouched,
 byte for byte. Nothing overwrites what you did.
 
 RouterDrive reads those colors too, so the file list shows the real cut
