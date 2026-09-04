@@ -490,6 +490,33 @@ back to show you what's set. But on their own they do nothing on the
 machine - a file with perfect `shaper:` attributes and an unrecognized
 stroke color imports with no cut type at all.
 
+**Custom anchors are the same mechanism, and the editor has to respect
+that.** Shaper's "custom anchor" is not an attribute either: it's a
+right-angled closed triangle with a **red fill and no stroke**, whose
+right-angle vertex is the design's reference point and whose shorter and
+longer legs define the X and Y axes. (The nine standard anchor points are
+a separate feature, chosen on the machine at placement time - nothing in
+the file, same as bit size.)
+
+The reader is already immune: red never matches, since the fill
+classifier wants equal R/G/B and the stroke classifier wants blue
+dominance, so an anchor contributes no bits and can't cause a false
+Mixed. The per-line editor was not. It colours shapes by their
+`shaper:cutType`, so an anchor - which has none - drew in unset-black,
+indistinguishable from a line you hadn't set. Select it, hit Apply, and
+`applyShaperCutColors()` overwrote the red: the file still opened, it
+just quietly no longer had an anchor, and the Origin would cut the
+triangle. `cutEditorIsAnchor()` now spots a red-dominant fill (read via
+`getComputedStyle`, so a named colour, a hex and an `rgb()` all normalize
+the same way, and read *before* the preview forces `fill:none`), draws it
+in its own colour with an Anchor legend entry, and refuses selection with
+an explanation rather than silently ignoring the click. Detection is
+deliberately liberal - any red-dominant fill, not strictly a right
+triangle - because a red shape encodes no cut type whatever its geometry,
+so declining to overwrite it is right either way. `test_anchor.js` covers
+it, including that the red survives a full save round trip; disabling the
+detector fails six of its checks.
+
 **A side effect worth knowing:** because Outside/Inside/Pocket are
 encoded as *fills*, a file with those cut types set renders as solid
 black/white/gray shapes in Preview, Illustrator, or any other SVG

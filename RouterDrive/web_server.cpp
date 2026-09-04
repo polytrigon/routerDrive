@@ -1146,6 +1146,7 @@ static String renderPage() {
           "<div><span class='swatch' style='background:#888'></span>On Line</div>"
           "<div><span class='swatch' style='background:#c9950a'></span>Guide</div>"
           "<div><span class='swatch' style='background:#000'></span>Not set yet</div>"
+          "<div><span class='swatch' style='background:#e11d2e'></span>Anchor</div>"
           "<div><span class='swatch' style='background:#00b8ff'></span>Selected</div>"
           "</div>" // .cut-legend
           "</div>" // .cut-editor-viewer
@@ -1470,6 +1471,31 @@ static String renderPage() {
           "var EDITOR_CUT_COLORS = {outside: '#1437c9', inside: '#0a8a3f', pocket: '#8a2be2', online: '#888', guide: '#c9950a'};"
           "var EDITOR_UNSET_COLOR = '#000';"
           "var EDITOR_SELECT_COLOR = '#00b8ff';"
+          "var EDITOR_ANCHOR_COLOR = '#e11d2e';"
+          // A Shaper "custom anchor" is not a cut - it's a right-angled
+          // triangle with a RED fill and no stroke, whose right-angle
+          // vertex tells Origin where the design's reference point is and
+          // whose legs define its axes. Red is the whole mechanism, same
+          // as gray means On Line. That matters here because the editor
+          // draws anything without a cutType in black, so an anchor looked
+          // exactly like a line nobody had set yet - click it, hit Apply,
+          // and applyShaperCutColors() would overwrite the red and quietly
+          // turn the file's anchor into a triangle the Origin cuts.
+          //
+          // Read through getComputedStyle so a named color ('red'), a hex
+          // and an rgb() all arrive in the same normalized form, and read
+          // it BEFORE cutEditorInitShape() forces fill:none for preview.
+          // Deliberately liberal - any red-dominant fill counts, not only
+          // a strict right triangle. A red shape encodes no cut type
+          // whatever its geometry, so declining to overwrite it is the
+          // right call even when it isn't a real anchor.
+          "function cutEditorIsAnchor(el) {"
+          "var f = window.getComputedStyle(el).fill || '';"
+          "var m = /rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(f);"
+          "if (!m) return false;"
+          "var r = +m[1], g = +m[2], b = +m[3];"
+          "return r >= 128 && r > g + 60 && r > b + 60;"
+          "}"
           "var cutEditorState = {name: '', folder: '', svgEl: null, selected: [], dirty: false};"
           "function openCutEditorFromBtn(btn) {"
           "openCutEditor(btn.getAttribute('data-name'), btn.getAttribute('data-dir'));"
@@ -1530,7 +1556,9 @@ static String renderPage() {
           // clone is marked data-hit-proxy so saveCutEditor() can leave it
           // out of what actually gets written to the file.
           "function cutEditorInitShape(el) {"
-          "el.style.fill = 'none';"
+          // Check the real fill before overriding it below.
+          "if (cutEditorIsAnchor(el)) el.setAttribute('data-anchor', '1');"
+          "el.style.fill = (el.getAttribute('data-anchor') ? EDITOR_ANCHOR_COLOR : 'none');"
           "cutEditorRecolor(el);"
           "var hit = el.cloneNode(false);"
           "hit.setAttribute('data-hit-proxy', '1');"
@@ -1559,6 +1587,13 @@ static String renderPage() {
           "return m ? { val: m[1], unit: m[2] } : { val: '', unit: '' };"
           "}"
           "function cutEditorRecolor(el) {"
+          "if (el.getAttribute('data-anchor')) {"
+          "el.style.fill = EDITOR_ANCHOR_COLOR;"
+          "el.style.stroke = EDITOR_ANCHOR_COLOR;"
+          "el.style.strokeWidth = '2';"
+          "el.style.strokeDasharray = '';"
+          "return;"
+          "}"
           "var isSelected = cutEditorState.selected.indexOf(el) >= 0;"
           "if (isSelected) {"
           "el.style.stroke = EDITOR_SELECT_COLOR;"
@@ -1572,6 +1607,14 @@ static String renderPage() {
           "}"
           "}"
           "function cutEditorToggleSelect(el, additive) {"
+          // Refuse at the point of selection rather than at Apply: there is
+          // nothing you could usefully set on an anchor, so letting it into
+          // a selection would only create a way to damage the file.
+          "if (el.getAttribute('data-anchor')) {"
+          "document.getElementById('cutEditorStatus').textContent = "
+          "'That red shape is the file\\'s custom anchor - it tells the Origin where to place the design, so it has no cut type and can\\'t be given one.';"
+          "return;"
+          "}"
           "var idx = cutEditorState.selected.indexOf(el);"
           "if (!additive) {"
           "var wasOnlySelected = (idx >= 0 && cutEditorState.selected.length === 1);"

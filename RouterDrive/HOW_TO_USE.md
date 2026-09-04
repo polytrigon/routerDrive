@@ -129,6 +129,17 @@ reserved for a file with nothing the Origin can read at all - a plain
 outline drawing from some other program that was never colored for
 Shaper.
 
+**If your file has a custom anchor, the editor leaves it alone.** A custom
+anchor is a red triangle you draw in another program to tell the Origin
+exactly where your design should sit. It isn't something to cut, so the
+editor shows it in red, won't let you select it, and won't write a cut
+type onto it - click it and it just explains what it is. Your anchor comes
+through untouched.
+
+If you use the Origin's own anchor buttons instead (the nine corner and
+edge points on the tool), none of this applies - that choice is made on
+the machine and isn't part of the file at all.
+
 ## Files you set up in another app
 
 You don't have to use RouterDrive's editor at all. Origin identifies cut
