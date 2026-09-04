@@ -935,11 +935,28 @@ usable instead of growing into one long scroll.
   a real Origin. It also adds a new `GET /svg` route
   (`handleGetSvg()` in `web_server.cpp`) that reads a stored file's
   entire content into memory and serves it back to the browser - unlike
-  the cut-type scan, which streams the file a chunk at a time and never
-  holds more than a couple of KB, this one reads the whole file into
-  SRAM - acceptable because it only ever runs for one file at a time, on
-  demand. It works on real files but hasn't been pushed with an unusually
-  large SVG, so that's where to expect trouble first.
+  the cut-type scan, this one used to read the whole file into SRAM,
+  copy it into a String, and hand that to send() - which copies it again.
+  Three copies of the file resident at once, on a device that had just
+  built a page String of its own. Arduino builds with exceptions off, so a
+  failed `new` there returns null and the next line writes through it: a
+  reboot rather than an error. It now streams in 1KB pieces, so peak use
+  is one small buffer whatever the file's size.
+
+  Worth knowing because a real stall was seen once - the editor stuck on
+  "Loading...", the page unresponsive, then fine again after a wait, which
+  is what a reboot-and-reconnect looks like from the browser. That was
+  never reproduced or confirmed, so this is a plausible cause removed
+  rather than a diagnosed bug fixed. If it recurs, the Serial Monitor
+  settles it: a fresh "=== RouterDrive starting ===" banner means the
+  device rebooted, and anything else means look elsewhere.
+- **Renaming a file used to lose its date.** `FFat.rename()` doesn't
+  carry the timestamp to the new directory entry, so a renamed file came
+  back with a time before `formatDateTime()`'s sanity cutoff and showed as
+  "-" in the Uploaded column, as though it predated the clock ever being
+  set. `handleRename()` now reads the old time before renaming and puts it
+  back afterwards with `utime()` on the VFS path (`/ffat` plus the path
+  FFat itself uses). Nothing but the date was ever affected.
 - Very rarely, restarting RouterDrive while it's plugged into the Origin
   has shown the drive briefly enumerate (Origin shows "No files found",
   meaning it did mount it) and then drop out again (back to "No USB drive

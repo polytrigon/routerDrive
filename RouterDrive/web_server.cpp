@@ -11,6 +11,7 @@
 #include <FFat.h>
 #include <FS.h>
 #include <time.h>
+#include <utime.h>  // restoring a renamed file's timestamp - see handleRename()
 #include <ctype.h>
 #include <stdio.h>
 #include <vector>
@@ -2361,11 +2362,33 @@ static void handleRename() {
         failed.push_back(from + " (no longer there)");
       } else if (FFat.exists(toPath)) {
         failed.push_back(from + " (" + to + " already exists)");
-      } else if (FFat.rename(fromPath, toPath)) {
-        renamed.push_back(from + " -> " + to);
-        claimed.push_back(to);
       } else {
-        failed.push_back(from);
+        // FFat.rename() doesn't carry the file's timestamp to the new
+        // directory entry, so a renamed file came back with a date before
+        // formatDateTime()'s sanity cutoff and showed as "-" in the
+        // Uploaded column - as though it had been uploaded before the
+        // clock was ever set. Read the old time first, put it back after.
+        time_t keepTime = 0;
+        File src = FFat.open(fromPath, FILE_READ);
+        if (src) {
+          keepTime = src.getLastWrite();
+          src.close();
+        }
+        if (FFat.rename(fromPath, toPath)) {
+          if (keepTime > 0) {
+            // FFat mounts at /ffat, so the POSIX path the VFS knows this
+            // file by is that prefix plus the path FFat itself takes.
+            String vfsPath = String("/ffat") + toPath;
+            struct utimbuf times;
+            times.actime = keepTime;
+            times.modtime = keepTime;
+            utime(vfsPath.c_str(), &times);
+          }
+          renamed.push_back(from + " -> " + to);
+          claimed.push_back(to);
+        } else {
+          failed.push_back(from);
+        }
       }
     }
     storageEndAppAccess(true);
@@ -2666,15 +2689,23 @@ static void handleGetSvg() {
     server.send(404, "text/plain", "Not found");
     return;
   }
-  size_t sz = f.size();
-  char *buf = new char[sz + 1];
-  size_t n = f.read((uint8_t *)buf, sz);
-  buf[n] = '\0';
-  String content(buf);
-  delete[] buf;
+  // Streamed in fixed-size pieces rather than read whole. This used to
+  // allocate the entire file, copy it into a String, and hand that to
+  // send() - which copies it again. Three copies of the file resident at
+  // once, on a device that has just built a page String of its own, and
+  // Arduino builds with exceptions off, so a failed `new` returns null and
+  // the next line writes through it: a reboot, not an error. Peak use is
+  // now one 1KB buffer no matter how big the file is.
+  server.setContentLength(f.size());
+  server.send(200, "image/svg+xml", "");
+  uint8_t chunk[1024];
+  while (true) {
+    size_t n = f.read(chunk, sizeof(chunk));
+    if (n == 0) break;
+    server.sendContent((const char *)chunk, n);
+  }
   f.close();
   storageEndAppAccess(false); // just reading, nothing changed - no need to nudge the host
-  server.send(200, "image/svg+xml", content);
 }
 
 static void handleNotFound() {
