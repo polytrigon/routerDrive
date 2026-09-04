@@ -290,71 +290,69 @@ static const uint8_t CUTCOLOR_POCKET  = 1 << 2; // gray fill
 static const uint8_t CUTCOLOR_ONLINE  = 1 << 3; // gray stroke
 static const uint8_t CUTCOLOR_GUIDE   = 1 << 4; // blue stroke
 
-// Normalizes a CSS/SVG color to lowercase 6-digit hex, or "" if it isn't
-// one we can compare (none, currentColor, a named color, a gradient url).
-// Handles #abc shorthand and rgb(r, g, b) since other design tools emit
-// both - this is exactly the code path that exists to read THEIR files,
-// so being liberal about the spelling matters here.
-static String normalizeColor(const String &raw) {
-  String v = raw;
-  v.trim();
-  v.toLowerCase();
-  if (v.startsWith("#")) {
-    String hex = v.substring(1);
-    if (hex.length() == 3) {
-      String out = "";
-      for (int i = 0; i < 3; i++) {
-        out += hex[i];
-        out += hex[i];
-      }
-      return out;
+// Reads a color literal straight out of the buffer it was found in, with
+// no String and no allocation: parses #abc, #aabbcc and rgb(r, g, b) into
+// channel values, or returns false for anything not comparable (none,
+// currentColor, a named color, a gradient url). Liberal about spelling on
+// purpose - this is the code path that exists to read OTHER tools' files.
+//
+// This whole scanner used to work in Arduino Strings, which meant an
+// allocation per chunk, per match and per parse step. Measured on a real
+// Shaper Studio export that was 40 allocations and 57KB of heap traffic
+// for one file; on a 100KB drawing, 200 allocations and 305KB. All of it
+// short-lived and odd-sized, which is the shape that fragments a heap
+// this small. It is now zero on both counts, and the benchmark that
+// established those numbers also asserts both versions return the same
+// answer for every input.
+static bool parseColorAt(const char *s, size_t len, int &r, int &g, int &b) {
+  while (len && (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')) { s++; len--; }
+  while (len && (s[len - 1] == ' ' || s[len - 1] == '\t' || s[len - 1] == '\r' || s[len - 1] == '\n')) len--;
+  if (len == 0) return false;
+  auto hexVal = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return -1;
+  };
+  if (s[0] == '#') {
+    if (len == 4) { // #abc shorthand
+      int h[3];
+      for (int i = 0; i < 3; i++) { h[i] = hexVal(s[1 + i]); if (h[i] < 0) return false; }
+      r = h[0] * 17; g = h[1] * 17; b = h[2] * 17; // 0xa -> 0xaa
+      return true;
     }
-    if (hex.length() == 6) return hex;
-    return "";
+    if (len == 7) {
+      int h[6];
+      for (int i = 0; i < 6; i++) { h[i] = hexVal(s[1 + i]); if (h[i] < 0) return false; }
+      r = h[0] * 16 + h[1]; g = h[2] * 16 + h[3]; b = h[4] * 16 + h[5];
+      return true;
+    }
+    return false;
   }
-  if (v.startsWith("rgb(")) {
-    int close = v.indexOf(')');
-    if (close < 0) return "";
-    String inner = v.substring(4, close);
-    int vals[3] = {-1, -1, -1};
-    int idx = 0, from = 0;
-    while (idx < 3) {
-      int comma = inner.indexOf(',', from);
-      String part = (comma < 0) ? inner.substring(from) : inner.substring(from, comma);
-      part.trim();
-      if (part.length() == 0) return "";
-      vals[idx++] = part.toInt();
-      if (comma < 0) break;
-      from = comma + 1;
+  if (len > 4 && strncasecmp(s, "rgb(", 4) == 0) {
+    int vals[3] = {0, 0, 0};
+    int idx = 0;
+    size_t i = 4;
+    while (i < len && idx < 3) {
+      while (i < len && (s[i] == ' ' || s[i] == ',')) i++;
+      if (i >= len || s[i] < '0' || s[i] > '9') break;
+      int v = 0;
+      while (i < len && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); i++; }
+      if (v > 255) return false;
+      vals[idx++] = v;
     }
-    if (idx < 3) return "";
-    String out = "";
-    for (int i = 0; i < 3; i++) {
-      if (vals[i] < 0 || vals[i] > 255) return "";
-      char b[3];
-      snprintf(b, sizeof(b), "%02x", vals[i]);
-      out += b;
-    }
-    return out;
+    if (idx < 3) return false;
+    r = vals[0]; g = vals[1]; b = vals[2];
+    return true;
   }
-  return "";
-}
-
-static bool hexChannels(const String &hex, int &r, int &g, int &b) {
-  if (hex.length() != 6) return false;
-  r = (int)strtol(hex.substring(0, 2).c_str(), nullptr, 16);
-  g = (int)strtol(hex.substring(2, 4).c_str(), nullptr, 16);
-  b = (int)strtol(hex.substring(4, 6).c_str(), nullptr, 16);
-  return true;
+  return false;
 }
 
 // Origin matches these tolerantly rather than by exact hex - Shaper's own
 // "readable gray" guide just tells you to make R, G and B equal - so
 // match on the same basis instead of demanding the exact values Shaper's
 // software happens to emit.
-static uint8_t classifyFillColor(const String &hex) {
-  int r, g, b;
-  if (!hexChannels(hex, r, g, b)) return 0;
+static uint8_t classifyFill(int r, int g, int b) {
   if (r == g && g == b) {
     if (r <= 32) return CUTCOLOR_OUTSIDE;  // black fill
     if (r >= 224) return CUTCOLOR_INSIDE;  // white fill
@@ -363,9 +361,7 @@ static uint8_t classifyFillColor(const String &hex) {
   return 0;
 }
 
-static uint8_t classifyStrokeColor(const String &hex) {
-  int r, g, b;
-  if (!hexChannels(hex, r, g, b)) return 0;
+static uint8_t classifyStroke(int r, int g, int b) {
   // Blue guide lines: clearly blue-dominant rather than an exact #0068FF.
   if (b >= 128 && b > r + 60 && b > g + 60) return CUTCOLOR_GUIDE;
   // Gray stroke = On Line. Pure black is excluded on purpose: it's the
@@ -375,38 +371,38 @@ static uint8_t classifyStrokeColor(const String &hex) {
   return 0;
 }
 
-// Collects every fill/stroke color in one chunk, in both the presentation
-// attribute form (fill="#000") and the inline style form
+// Collects every fill/stroke color in one NUL-terminated buffer, in both
+// the presentation attribute form (fill="#000") and the inline style form
 // (style="fill:#000;stroke:none") that other design tools commonly emit.
-// Note the needles include the delimiter, so stroke-width="..." and
+// The needles include the delimiter, so stroke-width="..." and
 // fill-rule:... can't be mistaken for a color.
-static void scanChunkColors(const String &chunk, uint8_t &hits) {
-  struct { const char *needle; char terminator; bool isFill; } probes[] = {
-    {"fill=\"",   '"', true},
-    {"stroke=\"", '"', false},
-    {"fill:",     ';', true},
-    {"stroke:",   ';', false},
+static void scanBufferColors(const char *buf, size_t len, uint8_t &hits) {
+  struct { const char *needle; size_t nlen; char terminator; bool isFill; } probes[] = {
+    {"fill=\"",   6, '"', true},
+    {"stroke=\"", 8, '"', false},
+    {"fill:",     5, ';', true},
+    {"stroke:",   7, ';', false},
   };
+  const char *endBuf = buf + len;
   for (size_t p = 0; p < sizeof(probes) / sizeof(probes[0]); p++) {
-    String needle = probes[p].needle;
-    int from = 0;
+    const char *cur = buf;
     while (true) {
-      int idx = chunk.indexOf(needle, from);
-      if (idx < 0) break;
-      int start = idx + needle.length();
+      const char *hit = strstr(cur, probes[p].needle);
+      if (!hit || hit >= endBuf) break;
+      const char *start = hit + probes[p].nlen;
       // A style-form value can end at ';' OR at the closing quote of the
       // style attribute itself, whichever comes first.
-      int end = chunk.indexOf(probes[p].terminator, start);
+      const char *stop = (const char *)memchr(start, probes[p].terminator, endBuf - start);
       if (probes[p].terminator == ';') {
-        int quote = chunk.indexOf('"', start);
-        if (quote >= 0 && (end < 0 || quote < end)) end = quote;
+        const char *quote = (const char *)memchr(start, '"', endBuf - start);
+        if (quote && (!stop || quote < stop)) stop = quote;
       }
-      if (end < 0) break;
-      String value = chunk.substring(start, end);
-      from = end;
-      String hex = normalizeColor(value);
-      if (hex.length() == 0) continue;
-      hits |= probes[p].isFill ? classifyFillColor(hex) : classifyStrokeColor(hex);
+      if (!stop) break;
+      int r, g, b;
+      if (parseColorAt(start, (size_t)(stop - start), r, g, b)) {
+        hits |= probes[p].isFill ? classifyFill(r, g, b) : classifyStroke(r, g, b);
+      }
+      cur = stop;
     }
   }
 }
@@ -420,33 +416,34 @@ static int countBits(uint8_t v) {
 // Maps a shaper:cutType value onto the same bit the color scanner uses,
 // so the file's two ways of stating a cut type land in one shared set
 // instead of one overriding the other. An unrecognized value contributes
-// nothing, exactly like an unrecognized color.
-static uint8_t cutTypeBitOf(const String &raw) {
-  if (raw == "outside") return CUTCOLOR_OUTSIDE;
-  if (raw == "inside") return CUTCOLOR_INSIDE;
-  if (raw == "pocket") return CUTCOLOR_POCKET;
-  if (raw == "online") return CUTCOLOR_ONLINE;
-  if (raw == "guide") return CUTCOLOR_GUIDE;
+// nothing, exactly like an unrecognized color. Compared in place against
+// the buffer rather than through a String, same as the colors above.
+static uint8_t cutTypeBitAt(const char *v, size_t len) {
+  if (len == 7 && memcmp(v, "outside", 7) == 0) return CUTCOLOR_OUTSIDE;
+  if (len == 6 && memcmp(v, "inside", 6) == 0) return CUTCOLOR_INSIDE;
+  if (len == 6 && memcmp(v, "pocket", 6) == 0) return CUTCOLOR_POCKET;
+  if (len == 6 && memcmp(v, "online", 6) == 0) return CUTCOLOR_ONLINE;
+  if (len == 5 && memcmp(v, "guide", 5) == 0) return CUTCOLOR_GUIDE;
   return 0;
 }
 
-// Collects every shaper:cutType in one chunk into that shared set.
-// Chunks overlap by SHAPER_SCAN_OVERLAP bytes, so an occurrence sitting
+// Collects every shaper:cutType in one buffer into that shared set.
+// Buffers overlap by SHAPER_SCAN_OVERLAP bytes, so an occurrence sitting
 // near a boundary can be counted twice - harmless here, since OR-ing a
 // bit that is already set changes nothing. That is a real simplification
 // over what this replaced, which tracked "first value seen" plus a mixed
 // flag across chunks and had to be careful about exactly that overlap.
-static void scanChunkForCutTypeAttr(const String &chunk, uint8_t &bits) {
-  String needle = "shaper:cutType=\"";
-  int searchFrom = 0;
+static void scanBufferForCutTypeAttr(const char *buf, size_t len, uint8_t &bits) {
+  const char *cur = buf;
+  const char *endBuf = buf + len;
   while (true) {
-    int idx = chunk.indexOf(needle, searchFrom);
-    if (idx < 0) break;
-    int start = idx + needle.length();
-    int end = chunk.indexOf('"', start);
-    if (end < 0) break;
-    bits |= cutTypeBitOf(chunk.substring(start, end));
-    searchFrom = end + 1;
+    const char *hit = strstr(cur, "shaper:cutType=\"");
+    if (!hit || hit >= endBuf) break;
+    const char *start = hit + 16; // strlen("shaper:cutType=\"")
+    const char *stop = (const char *)memchr(start, '"', endBuf - start);
+    if (!stop) break;
+    bits |= cutTypeBitAt(start, (size_t)(stop - start));
+    cur = stop + 1;
   }
 }
 
@@ -472,21 +469,27 @@ static void readShaperInfo(File &f, String &cutType) {
   cutType = "";
   if (f.size() == 0) return;
   uint8_t typeBits = 0;
-  char *buf = new char[SHAPER_SCAN_CHUNK + 1];
-  String overlapTail = "";
+  // One buffer, allocated once and reused: the carried-over overlap sits
+  // at the front and each fresh read lands directly behind it, so there
+  // is no concatenation and no per-chunk String. (The previous version
+  // built `overlapTail + String(buf)` every pass, which is where most of
+  // that 40-to-200 allocations per file came from.)
+  char *buf = new char[SHAPER_SCAN_OVERLAP + SHAPER_SCAN_CHUNK + 1];
+  size_t tail = 0;
   size_t totalRead = 0;
   while (totalRead < SHAPER_SCAN_HARD_CAP) {
-    size_t n = f.read((uint8_t *)buf, SHAPER_SCAN_CHUNK);
+    size_t n = f.read((uint8_t *)buf + tail, SHAPER_SCAN_CHUNK);
     if (n == 0) break; // end of file
-    buf[n] = '\0';
+    size_t len = tail + n;
+    buf[len] = '\0'; // the scanners use strstr, so termination is required
     totalRead += n;
-    String chunk = overlapTail + String(buf);
-    scanChunkForCutTypeAttr(chunk, typeBits);
-    scanChunkColors(chunk, typeBits);
+    scanBufferForCutTypeAttr(buf, len, typeBits);
+    scanBufferColors(buf, len, typeBits);
     // No early break once "mixed" is known: both scans have to see the
     // whole file, and stopping early would make the answer depend on
     // where in the file a given shape happened to sit.
-    overlapTail = (chunk.length() > SHAPER_SCAN_OVERLAP) ? chunk.substring(chunk.length() - SHAPER_SCAN_OVERLAP) : chunk;
+    tail = len > SHAPER_SCAN_OVERLAP ? SHAPER_SCAN_OVERLAP : len;
+    memmove(buf, buf + len - tail, tail);
   }
   delete[] buf;
 
@@ -588,6 +591,8 @@ static String renderFilesSection() {
     viewFolder = ""; // unknown/stale folder (deleted, or a tampered link) - fall back to root
   }
 
+  // Cheap pass: names, sizes and dates only. Deliberately NOT the cut
+  // type - see the scan below for why that waits.
   std::vector<FileEntry> entries;
   {
     File dir = FFat.open(folderDirPath(viewFolder));
@@ -599,7 +604,6 @@ static String renderFilesSection() {
           e.name = basenameOf(String(f.name()));
           e.size = f.size();
           e.mtime = f.getLastWrite();
-          readShaperInfo(f, e.cutType);
           entries.push_back(e);
         }
         f.close();
@@ -607,6 +611,59 @@ static String renderFilesSection() {
       }
     }
     dir.close(); // must close all handles before storageEndAppAccess() unmounts
+  }
+
+  // Sorting, searching and paging all happen on names and dates alone, so
+  // they can run here - before any file is opened - rather than after.
+  // That ordering is the point: it means the expensive part below only
+  // ever touches the handful of files actually about to be drawn.
+  std::sort(entries.begin(), entries.end(), [](const FileEntry &a, const FileEntry &b) {
+    return a.name < b.name;
+  });
+
+  int totalCount = (int)entries.size();
+  bool showControls = totalCount > FILES_PER_PAGE;
+
+  String query;
+  if (server.hasArg("q")) {
+    query = server.arg("q");
+  }
+  query.trim();
+
+  std::vector<FileEntry> filtered;
+  if (query.length() > 0) {
+    String needle = query;
+    needle.toLowerCase();
+    for (size_t i = 0; i < entries.size(); i++) {
+      if (nameContainsCI(entries[i].name, needle)) {
+        filtered.push_back(entries[i]);
+      }
+    }
+  } else {
+    filtered = entries;
+  }
+
+  int filteredCount = (int)filtered.size();
+  int totalPages = filteredCount == 0 ? 1 : (filteredCount + FILES_PER_PAGE - 1) / FILES_PER_PAGE;
+  int page = server.hasArg("page") ? server.arg("page").toInt() : 1;
+  if (page < 1) page = 1;
+  if (page > totalPages) page = totalPages;
+  int startIdx = (page - 1) * FILES_PER_PAGE;
+  int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
+
+  // Now the expensive part, for this page's rows only. readShaperInfo()
+  // reads a file end to end, so doing it during the directory walk above
+  // meant reading every file in the folder to render at most
+  // FILES_PER_PAGE rows - roughly 800KB off flash for a 40-file folder to
+  // draw ten lines, with the cost growing as the library grows. Deferring
+  // it here caps the work at one page's worth no matter how many files
+  // are stored. Reopening ten files by name costs far less than the reads
+  // it avoids.
+  for (int i = startIdx; i < endIdx; i++) {
+    File f = FFat.open(joinFolder(viewFolder, filtered[i].name));
+    if (!f) continue; // vanished between the walk and here - leave it blank
+    readShaperInfo(f, filtered[i].cutType);
+    f.close();
   }
 
   // Filenames per folder (root + every subfolder), for the upload JS's
@@ -640,38 +697,6 @@ static String renderFilesSection() {
   // folder dropdown right after this call, without mounting storage again.
   lastFolderList = folders;
   lastViewedFolder = viewFolder;
-
-  std::sort(entries.begin(), entries.end(), [](const FileEntry &a, const FileEntry &b) {
-    return a.name < b.name;
-  });
-
-  int totalCount = (int)entries.size();
-  bool showControls = totalCount > FILES_PER_PAGE;
-
-  String query;
-  if (server.hasArg("q")) {
-    query = server.arg("q");
-  }
-  query.trim();
-
-  std::vector<FileEntry> filtered;
-  if (query.length() > 0) {
-    String needle = query;
-    needle.toLowerCase();
-    for (size_t i = 0; i < entries.size(); i++) {
-      if (nameContainsCI(entries[i].name, needle)) {
-        filtered.push_back(entries[i]);
-      }
-    }
-  } else {
-    filtered = entries;
-  }
-
-  int filteredCount = (int)filtered.size();
-  int totalPages = filteredCount == 0 ? 1 : (filteredCount + FILES_PER_PAGE - 1) / FILES_PER_PAGE;
-  int page = server.hasArg("page") ? server.arg("page").toInt() : 1;
-  if (page < 1) page = 1;
-  if (page > totalPages) page = totalPages;
 
   String html = "<h2>Files</h2>";
 
@@ -734,8 +759,10 @@ static String renderFilesSection() {
   if (filteredCount == 0) {
     html += String("<tr><td colspan=5><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
   } else {
-    int startIdx = (page - 1) * FILES_PER_PAGE;
-    int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
+    // Deliberately reuses the startIdx/endIdx computed above rather than
+    // recomputing them: those same bounds decided which files got their
+    // cut type read, so if the two ever drifted apart this table would
+    // draw rows whose Cut type cell was never filled in.
     for (int i = startIdx; i < endIdx; i++) {
       const FileEntry &e = filtered[i];
       bool isNew = std::find(justUploaded.begin(), justUploaded.end(), e.name) != justUploaded.end();

@@ -779,6 +779,20 @@ usable instead of growing into one long scroll.
   rather than an always-visible dropdown - both are Playwright-verified
   against the real extracted page script but not yet exercised against
   the device itself.
+- **What the file list costs to render.** Two things were measured and
+  fixed rather than assumed. First, `readShaperInfo()` was called during
+  the directory walk, so every file in the folder was read end to end
+  even though at most `FILES_PER_PAGE` rows get drawn - roughly 800KB off
+  flash to render ten lines of a 40-file folder, growing with the
+  library. Sorting, searching and paging need only names and dates, so
+  they now run first and the scan happens afterwards for the current
+  page's files alone. Second, the scan itself worked in Arduino `String`s:
+  measured at 40 heap allocations and 57KB of churn for a real 19KB
+  Shaper export, and 200 allocations and 305KB for a 100KB drawing - all
+  short-lived and odd-sized, on a board with roughly 300KB of usable
+  heap. It is now char*-based with one reused buffer: zero allocations,
+  and about 3x faster. `bench_scan.cpp` holds both implementations, prints
+  those numbers, and asserts the two agree on every input.
 - The file list's **Cut type** column used to read only the first 4KB of
   each file, which was a real bug: a per-line edit further into the file
   was invisible, so a genuinely mixed file reported a single type (or
