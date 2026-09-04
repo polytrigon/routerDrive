@@ -162,12 +162,12 @@ A file can only have one anchor, so picking a position replaces whatever
 was there. If the file already had one you drew yourself, you'll be asked
 before it's replaced, since that throws away where you put it.
 
-**This part is new and hasn't been tested on a real Origin yet.** The
-thing to watch for is a design that loads fine but comes out rotated or
-mirrored from where you expected - if that happens, set the dropdown back
-to Default, re-upload, and say so. (If the Origin refuses the file
-outright with "unable to place design", that's the anchor too, but it's
-the less likely of the two.)
+This has been tested on a real Origin. An earlier version placed the
+triangle at a different angle depending on which corner you picked, and
+the Origin responded by rotating the whole design 180 degrees for some of
+them. It now uses one angle everywhere, which is the one the machine
+placed correctly. If you ever see a design come out rotated from where
+you expected, that's the thing to report.
 
 ## Files you set up in another app
 

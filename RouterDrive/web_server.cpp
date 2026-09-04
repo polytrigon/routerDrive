@@ -1481,16 +1481,32 @@ static String renderPage() {
           // leg" unambiguous: equal legs would leave nothing to say which
           // one is X.
           //
-          //   ASSUMPTION (direction): the docs say which leg is which axis,
-          //   never which way either points, and Beau's note doesn't reach
-          //   that far. The legs are drawn INWARD from the chosen corner,
-          //   so the triangle always sits inside the design's bounds. If a
-          //   design places but comes out rotated or mirrored, this is the
-          //   line to change. It may well not matter at all - the docs say
-          //   the anchor's axes align to the Grid, or to the Origin's
-          //   screen when there is no Grid, which would mean the triangle
-          //   supplies the point and the workspace supplies the
-          //   orientation.
+          // DIRECTION is settled, by hardware test, and it is not what I
+          // first assumed. The legs used to be drawn INWARD from whichever
+          // corner was chosen, which meant a different orientation at every
+          // position. Two files cut on a real Origin showed what that
+          // costs: the bottom-right anchor (short leg left, long leg up)
+          // placed correctly, while the top-left one (short leg right, long
+          // leg down) came back with the WHOLE DESIGN ROTATED 180 degrees -
+          // which is exactly the rotation that turns the second orientation
+          // into the first.
+          //
+          // So the Origin reads orientation from the legs and rotates the
+          // design until the long (Y) leg points up. Orientation is now
+          // FIXED - short leg toward -x, long leg toward -y (up on screen),
+          // the configuration the machine accepted - and only the vertex
+          // moves between positions. A consequence worth knowing: at every
+          // corner except bottom-right the triangle now extends a little
+          // outside the drawing's bounds. That is fine - it is not cut -
+          // and it is the price of one orientation that works everywhere
+          // rather than four that each have to be lucky.
+          //
+          // Still untested: whether the Origin cares about the X leg too.
+          // Bottom-right works with X pointing left, so it evidently
+          // tolerates that, but a bl-style anchor (X right, Y up) would be
+          // the textbook frame and might be better still. Not changing it
+          // without a test - the current directions are the ones proven on
+          // hardware.
           //
           // What is NOT assumed: the fill. "#FF0000" is confirmed working
           // by a user who got one recognized, and the same thread found
@@ -1536,12 +1552,16 @@ static String renderPage() {
           "function buildAnchorPath(doc, box, pos) {"
           "var legX = Math.max(Math.min(box.w, box.h) * 0.05, 0.5);"
           "var legY = legX * 2;"
-          "var vx, vy, sx, sy;"
-          "if (pos === 'tl') { vx = box.x; vy = box.y; sx = 1; sy = 1; }"
-          "else if (pos === 'tr') { vx = box.x + box.w; vy = box.y; sx = -1; sy = 1; }"
-          "else if (pos === 'bl') { vx = box.x; vy = box.y + box.h; sx = 1; sy = -1; }"
-          "else if (pos === 'br') { vx = box.x + box.w; vy = box.y + box.h; sx = -1; sy = -1; }"
-          "else { vx = box.x + box.w / 2; vy = box.y + box.h / 2; sx = 1; sy = 1; }"
+          "var vx, vy;"
+          "if (pos === 'tl') { vx = box.x; vy = box.y; }"
+          "else if (pos === 'tr') { vx = box.x + box.w; vy = box.y; }"
+          "else if (pos === 'bl') { vx = box.x; vy = box.y + box.h; }"
+          "else if (pos === 'br') { vx = box.x + box.w; vy = box.y + box.h; }"
+          "else { vx = box.x + box.w / 2; vy = box.y + box.h / 2; }"
+          // Fixed for every position - see the note above. Short leg left,
+          // long leg up: the one orientation a real Origin placed without
+          // rotating the design.
+          "var sx = -1, sy = -1;"
           "var r = function(n) { return Math.round(n * 1000) / 1000; };"
           "var d = 'M ' + r(vx) + ',' + r(vy) + ' L ' + r(vx + sx * legX) + ',' + r(vy) +"
           "' L ' + r(vx) + ',' + r(vy + sy * legY) + ' Z';"

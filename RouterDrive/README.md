@@ -111,41 +111,6 @@ static const char *SVG_FOLDER = "/";   // change e.g. to "/SVGs" if needed
    select **XIAO_ESP32S3** (under the esp32 boards list).
 5. **Tools > Port**, select the port that appeared when you plugged it in.
 
-### If uploading fails the first time (it probably will)
-
-The usual pattern: you hit Upload, it fails to connect, the entry under
-**Tools > Port** changes, and the *second* attempt works. That is worth
-understanding rather than working around, because it will happen every
-time.
-
-The XIAO ESP32-S3 has no USB-to-serial chip. The USB port you flash
-through is provided by whatever firmware is currently running - and once
-RouterDrive is running, that firmware is busy being a USB flash drive.
-The IDE's automatic "reboot into the bootloader" handshake goes through
-that same USB connection, so it is unreliable here. When it fails, the
-port toggling it did on the way out often drops the chip into download
-mode anyway, the ROM bootloader enumerates with a different USB identity
-(hence the changed port), and the retry talks to the ROM and succeeds.
-
-To make it work first time, put the board in download mode by hand:
-
-1. Hold the **B** (BOOT) button.
-2. Tap the **R** (RESET) button.
-3. Release **B**.
-4. Pick the port that just appeared under **Tools > Port**, then Upload.
-5. Press **R** again afterwards to run the sketch.
-
-The `routerDrive_topButtons.stl` case in `3D Prints/` exists so you can
-reach both buttons without taking the device apart.
-
-**One thing to know about holding B**, because this project gives that
-button a second job: holding BOOT through a *normal* startup for
-`BOOT_RESET_HOLD_MS` (3 seconds) wipes the saved Wi-Fi credentials - see
-"Resetting Wi-Fi" below. If your download-mode attempt doesn't take and
-the sketch boots normally while you are still holding B, you can clear
-your Wi-Fi settings without meaning to. Let go of B as soon as you have
-tapped R and nothing is at risk either way.
-
 ### Required Tools-menu settings
 
 These matter - the sketch will fail to compile or MSC won't work without
@@ -568,14 +533,26 @@ proportionate in the editor preview at any scale. The 2:1 ratio is not
 about size - it's what keeps "shorter leg" unambiguous, since equal legs
 would leave nothing to say which one is X.
 
-**One assumption remains: direction.** Shaper says the shorter leg is X
-and the longer is Y, but never which way either points, and Beau's note
-doesn't reach that far. The legs are drawn *inward* from the chosen
-corner. If a design places but comes out rotated or mirrored, that's the
-line to change - `buildAnchorPath()`'s `sx`/`sy`. It may well not matter
-at all: the docs say the anchor's axes align to the Grid, or to the
-Origin's screen when there is no Grid, which would mean the triangle
-supplies the point and the workspace supplies the orientation.
+**Direction is settled, and it mattered.** The first build drew the legs
+*inward* from whichever corner you picked, which gave a different
+orientation at every position. Two files cut on a real Origin showed the
+cost: the bottom-right anchor placed correctly, and the top-left one came
+back with the **whole design rotated 180 degrees** - exactly the rotation
+that turns top-left's orientation into bottom-right's.
+
+So the Origin reads orientation from the legs and rotates the design
+until the long (Y) leg points up. Orientation is now fixed for every
+position - short leg toward -x, long leg toward -y - and only the vertex
+moves. A consequence worth knowing: at every corner but bottom-right the
+triangle now pokes slightly outside the drawing's bounds. That's fine, it
+isn't cut, and it's the price of one orientation that works everywhere
+instead of four that each have to get lucky.
+
+Still open: whether the X leg matters too. Bottom-right works with X
+pointing left, so the Origin evidently tolerates that, but a bottom-left
+style frame (X right, Y up) would be the textbook one and might be better
+again. Not worth changing without a test, since the current directions
+are the ones proven on hardware.
 
 What is *not* assumed is the fill: `#FF0000`, confirmed working by a user
 who got one recognized, in a thread that also turned up something the
@@ -583,14 +560,10 @@ docs omit - Shaper's colour match is **case-sensitive**, so `red` and
 `#FF0000` work while `Red` and `RED` do not, contrary to the SVG spec.
 Don't "tidy" that into a named colour.
 
-The failure mode helps: a malformed anchor makes the Origin refuse the
-file outright ("unable to place design") rather than placing it wrongly.
-Direction is the one that could be silently wrong instead.
-
-A Shaper Studio export with **Add Origin Anchor** enabled would settle it
-by diff rather than inference, the same way the cut-type encoding was
-settled after three failed guesses. Not done yet; until it is, treat
-direction as untested.
+Worth remembering how this was found: not by reasoning, but by uploading
+the same part twice with two different anchor positions and looking at
+what the machine did. The reasoning had been perfectly plausible and
+perfectly wrong, which is now the fourth time on this project.
 
 **Anchors are protected on both write paths.** Placing a cut type - by
 blanket upload or per-line edit - skips any red-filled shape. Without
