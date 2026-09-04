@@ -62,6 +62,47 @@ th {
   border-bottom: 2px solid #999;
 }
 
+/* File list column widths. Size, Cut type and Uploaded all get the same
+   fixed width so they read as an evenly spaced block sitting at the right
+   of the table, and Name - the longest, most variable, most worth-reading
+   value - takes whatever is left. table-layout:fixed is what makes those
+   widths authoritative rather than suggestions the browser re-weighs
+   against the content. */
+.file-table {
+  table-layout: fixed;
+}
+
+.file-table .col-check {
+  width: 2.2em;
+}
+
+.file-table .col-meta {
+  width: 7em;
+  white-space: nowrap;
+}
+
+/* A long filename wraps inside its own column instead of forcing the
+   table wider than the page. */
+.file-table td:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+
+/* Below roughly this width there isn't room for three fixed columns AND a
+   readable name - holding the widths anyway squeezes Name down to a couple
+   of characters and wraps filenames one letter per line. So on a phone the
+   even-spacing goal gives way: hand column sizing back to the browser and
+   let the metadata columns take only what their content needs (they stay
+   nowrap, so they still can't wrap mid-value), leaving the rest to Name. */
+@media (max-width: 560px) {
+  .file-table {
+    table-layout: auto;
+  }
+  .file-table .col-check,
+  .file-table .col-meta {
+    width: auto;
+  }
+}
+
 input {
   width: 100%;
   box-sizing: border-box;

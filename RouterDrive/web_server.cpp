@@ -469,7 +469,7 @@ static int countBits(uint8_t v) {
 // shaper:cutType if present anywhere in it, and otherwise
 // falling back to reading the cut types straight out of the file's colors
 // (see the color scanner above). Only a file with neither - no shaper:*
-// attributes AND nothing but plain un-encoded outlines - comes back
+// attributes AND no color Origin recognizes - comes back
 // blank, which the file list shows as "Unset". cutType comes back as the
 // sentinel raw value "mixed" (see cutTypeLabel()) when more than one
 // distinct cut type is present.
@@ -504,13 +504,19 @@ static void readShaperInfo(File &f, String &cutType) {
   // Studio either.
   if (cutType.length() > 0) return;
 
-  // A plain gray stroke on its own is the neutral baseline, not a choice:
-  // it's what this app's own DXF converter emits for every path so that a
-  // freshly converted file is valid to Origin, so treating it as "On Line
-  // was deliberately set" would label every single unedited upload. Only
-  // report a cut type once something other than that baseline shows up.
-  uint8_t meaningful = colorHits & ~CUTCOLOR_ONLINE;
-  if (meaningful == 0) return; // stays blank -> "Unset"
+  // A gray stroke reads as On Line - including on a file this app's own
+  // DXF converter produced with cut type left "unset". That file really
+  // is encoded as On Line, and the Origin really will cut on the line, so
+  // reporting "Unset" would be describing the uploader's intent rather
+  // than the file. This column answers "what will the machine do with
+  // this?", and an earlier version got that wrong in both directions: it
+  // also hid a third-party file whose author had deliberately set every
+  // line to On Line in Affinity or Inkscape.
+  //
+  // "Unset" keeps its meaning: a file with no recognized encoding at all
+  // - a plain black outline from a generic drawing tool, say - still has
+  // nothing here for Origin to read, and still reports Unset.
+  if (colorHits == 0) return; // stays blank -> "Unset"
   if (countBits(colorHits) > 1) {
     cutType = "mixed";
   } else if (colorHits & CUTCOLOR_OUTSIDE) {
@@ -519,6 +525,8 @@ static void readShaperInfo(File &f, String &cutType) {
     cutType = "inside";
   } else if (colorHits & CUTCOLOR_POCKET) {
     cutType = "pocket";
+  } else if (colorHits & CUTCOLOR_ONLINE) {
+    cutType = "online";
   } else if (colorHits & CUTCOLOR_GUIDE) {
     cutType = "guide";
   }
@@ -733,7 +741,10 @@ static String renderFilesSection() {
   if (viewFolder.length() > 0) {
     html += "<input type='hidden' name='dir' value='" + htmlEscape(viewFolder) + "'>";
   }
-  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th><th>Cut type</th></tr>";
+  // Column order and widths are set in style.css (.file-table): the three
+  // metadata columns share one fixed width so they line up as an evenly
+  // spaced block at the right, and Name takes everything left over.
+  html += "<table class='file-table'><tr><th class='col-check'><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th class='col-meta'>Size</th><th class='col-meta'>Cut type</th><th class='col-meta'>Uploaded</th></tr>";
   if (filteredCount == 0) {
     html += String("<tr><td colspan=5><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
   } else {
@@ -742,11 +753,16 @@ static String renderFilesSection() {
     for (int i = startIdx; i < endIdx; i++) {
       const FileEntry &e = filtered[i];
       bool isNew = std::find(justUploaded.begin(), justUploaded.end(), e.name) != justUploaded.end();
+      // The "just uploaded" tick rides with the name rather than the date:
+      // it's about this file, and the three metadata columns need to stay
+      // the same width as each other to line up.
       String checkmark = isNew ? " <span style='color:#0a0' title='Just uploaded'>&#10003;</span>" : "";
-      html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
-      html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
-              "<td><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
-              "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td></tr>";
+      html += "<tr><td class='col-check'><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
+      html += "<td>" + htmlEscape(e.name) + checkmark + "</td>"
+              "<td class='col-meta'>" + formatBytes(e.size) + "</td>"
+              "<td class='col-meta'><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
+              "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td>"
+              "<td class='col-meta'>" + formatDateTime(e.mtime) + "</td></tr>";
     }
   }
   html += "<tr><td colspan=5 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";

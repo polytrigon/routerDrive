@@ -607,8 +607,14 @@ be undone.
 
 ## The file list
 
-Each file's row shows a checkbox, its name, size, upload date, and cut
-type. Check any number of files - this also turns on the
+Each file's row shows a checkbox, its name, then size, cut type and
+upload date. Those last three share one fixed column width so they line
+up as an evenly spaced block at the right of the table, leaving the name -
+the longest and most variable value, and the one you actually read - all
+the remaining space. Below about 560px wide there isn't room for both, so
+column sizing goes back to the browser and the name keeps its space; a
+phone shows a tidy table rather than filenames wrapped one letter per
+line. Check any number of files - this also turns on the
 **"Rename"**, **"Move"** and **"Delete"** buttons beneath the table (all
 start greyed out/inactive, since none of them does anything with nothing
 selected). The checkbox in the header selects/deselects every row
@@ -688,20 +694,24 @@ and all, which won't fit the small streaming buffer `readShaperInfo()`
 uses) - it reports which cut types appear anywhere in the file, which is
 exactly what the column is for.
 
-One judgement call worth knowing about: a **plain gray stroke on its own
-counts as nothing set, not as On Line**. Gray stroke is what the DXF
-converter emits for every path so that a freshly converted file is valid
-to Origin, so treating it as a deliberate choice would label every
-single unedited upload "On Line". An explicit `shaper:cutType="online"`
-does show as On Line - that's a statement of intent, the bare color is a
-baseline. The practical cost is that a file where someone deliberately
-set *everything* to On Line in another app reads as Unset; it's
-byte-identical to the baseline, so there's nothing to tell them apart,
-and the resulting cut is the same either way.
+One judgement call, and it was made the wrong way round at first: a
+**plain gray stroke reads as On Line**, including on a file the DXF
+converter just produced with cut type left "unset". An earlier version
+treated bare gray as a neutral baseline and reported "Unset" for those,
+on the reasoning that otherwise every unedited upload would be labelled.
+But the column's job is to say what Origin will do with the file, and
+Origin will cut on the line - the old answer described what the uploader
+had picked in the dropdown instead. It also silently mislabelled a file
+where someone had deliberately set everything to On Line in another app,
+which is byte-identical to a converted file and equally deserving of an
+honest answer.
 
-A file with nothing detectable by either route shows **Unset** in both
-columns. The **Cut type** cell is itself a button: click it (whatever it
-currently shows) to open the per-line editor for that file.
+**Unset** still means something, and this is what earns it: a file with
+nothing either route can detect - no `shaper:` attributes, and no color
+Origin recognizes (a plain black outline from a generic drawing tool,
+say). That file genuinely has no cut type for the machine to read. The
+**Cut type** cell is itself a button: click it (whatever it currently
+shows) to open the per-line editor for that file.
 
 Once there are more than 10 files (`FILES_PER_PAGE` in `config.h`), a
 search box and Prev/Next pager appear above the table so the list stays

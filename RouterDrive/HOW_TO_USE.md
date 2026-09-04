@@ -113,20 +113,29 @@ for the whole file. For this, use the file list instead:
 
 Once a file has more than one cut type on it, its **Cut type** column in
 the file list shows **Mixed** instead of a single type - that's your
-signal it's using per-line settings rather than one blanket type. A file
-with nothing set at all shows **Unset**.
+signal it's using per-line settings rather than one blanket type.
+
+**A freshly converted DXF shows "On Line," not "Unset."** That isn't the
+list guessing - a converted file really is drawn in Shaper's On Line gray,
+and the Origin really will cut on the line. The column tells you what the
+machine will do with the file, so that's what it says. **Unset** is
+reserved for a file with nothing the Origin can read at all - a plain
+outline drawing from some other program that was never colored for
+Shaper.
 
 ## Files you set up in another app
 
 You don't have to use RouterDrive's editor at all. Origin identifies cut
 types by color, so a file you've already colored correctly in Affinity,
 Illustrator, Inkscape or anything else works as-is - just upload it with
-Cut type left on "unset" so nothing overwrites what you did.
+Cut type left on "unset" and RouterDrive passes it through untouched,
+byte for byte. Nothing overwrites what you did.
 
 RouterDrive reads those colors too, so the file list shows the real cut
 types for those files the same way it does for its own - **Pocket**,
-**Outside**, **Mixed**, and so on - rather than pretending nothing is
-set. The colors it looks for are the ones Shaper's own software uses:
+**Outside**, **On Line**, **Mixed**, and so on - rather than pretending
+nothing is set. The colors it looks for are the ones Shaper's own
+software uses:
 
 | Cut type | fill | stroke |
 |---|---|---|
