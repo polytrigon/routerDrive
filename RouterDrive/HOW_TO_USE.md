@@ -199,6 +199,13 @@ broadcasting `RouterDrive-Setup`:
   the device and does *not* touch your saved Wi-Fi - **B** is the one
   that matters for actually clearing your saved network.)
 
+  If you printed the case, whether you can do this without taking it
+  apart depends on which top you used: `routerDrive_topButtons.stl` has
+  integrated buttons that press the board's own **B** and **R** through
+  the lid, while `routerDrive_topNoButton.stl` covers them, so you'd
+  need to open the case up. Either way the **Forget Wi-Fi** button on
+  the RouterDrive page does the same job without touching the hardware.
+
 ## Status LED
 
 A small light on the board tells you the device's state at a glance:
