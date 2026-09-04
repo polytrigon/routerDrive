@@ -146,6 +146,28 @@ If you use the Origin's own anchor buttons instead (the nine corner and
 edge points on the tool), none of this applies - that choice is made on
 the machine and isn't part of the file at all.
 
+## Setting an anchor
+
+An **anchor** is the point the Origin lines your design up from. Normally
+you just pick one of the nine anchor points on the tool itself - corners,
+edges, centre - and nothing about that lives in the file.
+
+If you'd rather the file carry its own, there's an **Anchor** dropdown in
+the Upload section and another in the cut editor. Leave it on **Default**
+and nothing changes. Pick a position and RouterDrive draws Shaper's red
+anchor triangle at that corner of your design. The tool's own anchor
+buttons still work; you can switch between them on the machine.
+
+A file can only have one anchor, so picking a position replaces whatever
+was there. If the file already had one you drew yourself, you'll be asked
+before it's replaced, since that throws away where you put it.
+
+**This part is new and hasn't been tested on a real Origin yet.** If the
+Origin says "unable to place design", the anchor is the thing to suspect -
+set the dropdown back to Default, re-upload, and let me know. If it
+places but the design comes out rotated or mirrored from where you
+expected, that's worth reporting too, and is the more likely of the two.
+
 ## Files you set up in another app
 
 You don't have to use RouterDrive's editor at all. Origin identifies cut

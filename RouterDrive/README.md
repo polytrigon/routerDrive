@@ -517,6 +517,52 @@ so declining to overwrite it is right either way. `test_anchor.js` covers
 it, including that the red survives a full save round trip; disabling the
 detector fails six of its checks.
 
+**Placing a standard anchor (UNVERIFIED ON HARDWARE).** The Upload
+section and the cut editor can both write an anchor at a standard
+position - top left/right, bottom left/right, or centre - as the red
+triangle Shaper reads. Deliberately positions only: no drag-and-drop, no
+adjustable angles. The Origin's own nine anchor points still work
+alongside it; a custom anchor doesn't replace them, and the machine has a
+USE CUSTOM ANCHOR button to switch back.
+
+Two things in `buildAnchorPath()` are **assumptions, not documented
+facts**, and are the first things to check if the Origin doesn't like a
+generated file:
+
+1. **Size.** Shaper never states one. The legs are sized from the
+   drawing - 5% of its smaller dimension for X, double for Y - so the 2:1
+   ratio keeps "shorter leg" unambiguous at any scale.
+2. **Direction.** Shaper says the shorter leg is X and the longer is Y,
+   but never which way either points. The legs are drawn *inward* from
+   the chosen corner. If the Origin reads the design rotated or mirrored,
+   this is the line to change.
+
+What is *not* assumed is the fill: `#FF0000`, confirmed working by a user
+who got one recognized, in a thread that also turned up something the
+docs omit - Shaper's colour match is **case-sensitive**, so `red` and
+`#FF0000` work while `Red` and `RED` do not, contrary to the SVG spec.
+Don't "tidy" that into a named colour.
+
+The failure mode helps here: a malformed anchor makes the Origin refuse
+the file outright ("unable to place design") rather than placing it
+wrongly. So assumption 1 fails loudly. Assumption 2 is the dangerous one -
+a well-formed but rotated anchor would be accepted and simply be wrong.
+
+One Shaper Studio export with **Add Origin Anchor** enabled would settle
+all of this by diff rather than inference, the same way the cut-type
+encoding was settled after three failed guesses. That hasn't been done
+yet; until it is, treat the two points above as untested.
+
+**Anchors are protected on both write paths.** Placing a cut type - by
+blanket upload or per-line edit - skips any red-filled shape. Without
+that, uploading an Affinity file that already had an anchor while also
+choosing a cut type would recolour the anchor into a cut and destroy it;
+`test_anchor_generate.js` covers exactly that, and disabling the anchor
+marking fails it. Shaper allows one custom anchor per object, so choosing
+a position replaces an existing anchor rather than adding a second, and
+the editor asks first because that discards geometry the user placed
+deliberately.
+
 **A side effect worth knowing:** because Outside/Inside/Pocket are
 encoded as *fills*, a file with those cut types set renders as solid
 black/white/gray shapes in Preview, Illustrator, or any other SVG

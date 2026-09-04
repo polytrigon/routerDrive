@@ -1075,6 +1075,19 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>";
   html += "<br><br>";
+  // "Default" leaves anchors alone entirely, which for an SVG means the
+  // file is not rewritten at all - so a custom anchor drawn in another
+  // program survives untouched. Anything else writes a standard-position
+  // anchor, replacing whatever was there.
+  html += "<select id='uploadAnchor' class='full-width'>"
+          "<option value='' selected>Anchor: Default</option>"
+          "<option value='tl'>Anchor: Top left</option>"
+          "<option value='tr'>Anchor: Top right</option>"
+          "<option value='bl'>Anchor: Bottom left</option>"
+          "<option value='br'>Anchor: Bottom right</option>"
+          "<option value='c'>Anchor: Center</option>";
+  html += "</select>";
+  html += "<br><br>";
   html += "<div class='depth-row'>"
           "<input type='number' id='cutDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
           "<select id='cutDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
@@ -1157,6 +1170,19 @@ static String renderPage() {
           // easy to miss, and "is my anchor still in here?" is exactly the
           // question someone opens this dialog worrying about.
           "<p id='cutEditorAnchorInfo' class='sub'></p>"
+          // The info line above reports what the file HAS; this sets it.
+          // Kept separate on purpose - a control that both reports and
+          // changes state reads as though "Top right" is already true.
+          "<select id='editAnchor' class='full-width' onchange='handleEditAnchorChange()'>"
+          "<option value='keep' selected>Anchor: leave as is</option>"
+          "<option value='tl'>Anchor: Top left</option>"
+          "<option value='tr'>Anchor: Top right</option>"
+          "<option value='bl'>Anchor: Bottom left</option>"
+          "<option value='br'>Anchor: Bottom right</option>"
+          "<option value='c'>Anchor: Center</option>"
+          "<option value='none'>Anchor: remove</option>"
+          "</select>"
+          "<br><br>"
           "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
           "<select id='editCutType' class='full-width'>"
           "<option value='' selected>Cut type: choose one</option>"
@@ -1439,7 +1465,113 @@ static String renderPage() {
           // shaper:cutDepth stays - that one Shaper documents as a real
           // override, and it's a different thing that merely shares the
           // namespace.
-          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit) {"
+          // ---- Shaper custom anchors ------------------------------------
+          // A custom anchor is a red right-angled triangle: the right-angle
+          // vertex is the design's reference point, the shorter leg is the
+          // X axis and the longer leg the Y axis. Shaper's docs state that
+          // much and no more, so two things below are ASSUMPTIONS, marked
+          // as such because they are what a hardware test needs to check:
+          //
+          //   ASSUMPTION 1 (size): the docs never give one. The legs are
+          //   sized from the drawing - 5% of its smaller dimension for X,
+          //   double that for Y - so the 2:1 ratio makes "shorter" and
+          //   "longer" unambiguous at any scale, and the triangle stays
+          //   proportionate on a coaster or a table top.
+          //
+          //   ASSUMPTION 2 (direction): the docs say which leg is which
+          //   axis, never which way either points. The legs are drawn
+          //   INWARD from the chosen corner, so the triangle always sits
+          //   inside the design's bounds. If the Origin reads the axes
+          //   rotated or mirrored, this is the line to change.
+          //
+          // What is NOT assumed: the fill. "#FF0000" is confirmed working
+          // by a user who got one recognized, and the same thread found
+          // Shaper's match is case-sensitive - "red" and "#FF0000" work,
+          // "Red" and "RED" do not, contrary to the SVG spec. Do not
+          // "tidy" this into a named color.
+          //
+          // A malformed anchor makes the Origin refuse the file outright
+          // ("unable to place design"), so a wrong guess here is loud
+          // rather than silent - except for direction, where a well-formed
+          // but rotated anchor would be accepted and simply be wrong.
+          "var ANCHOR_FILL = '#FF0000';"
+          // Tags every red-filled shape so the rest of the code can leave
+          // anchors alone. Needs the element rendered - see
+          // withRenderedSvg() - because it reads the computed fill.
+          "function markAnchors(svgEl) {"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "for (var i = 0; i < shapes.length; i++) {"
+          "if (cutEditorIsAnchor(shapes[i])) shapes[i].setAttribute('data-anchor', '1');"
+          "}"
+          "}"
+          // The drawing's own bounds, ignoring any existing anchor and the
+          // editor's invisible hit proxies - an anchor must be placed
+          // relative to the design, not to a previous anchor.
+          "function svgContentBox(svgEl) {"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "var minX = null, minY = null, maxX = null, maxY = null;"
+          "for (var i = 0; i < shapes.length; i++) {"
+          "var el = shapes[i];"
+          "if (el.getAttribute('data-anchor') || el.getAttribute('data-hit-proxy')) continue;"
+          "var b = null;"
+          "try { b = el.getBBox(); } catch (e) { continue; }"
+          "if (!b || (b.width === 0 && b.height === 0)) continue;"
+          "if (minX === null || b.x < minX) minX = b.x;"
+          "if (minY === null || b.y < minY) minY = b.y;"
+          "if (maxX === null || b.x + b.width > maxX) maxX = b.x + b.width;"
+          "if (maxY === null || b.y + b.height > maxY) maxY = b.y + b.height;"
+          "}"
+          "if (minX === null) return null;"
+          "return {x: minX, y: minY, w: maxX - minX, h: maxY - minY};"
+          "}"
+          // Note SVG's y axis points DOWN, so 'top' is the smaller y.
+          "function buildAnchorPath(doc, box, pos) {"
+          "var legX = Math.max(Math.min(box.w, box.h) * 0.05, 0.5);"
+          "var legY = legX * 2;"
+          "var vx, vy, sx, sy;"
+          "if (pos === 'tl') { vx = box.x; vy = box.y; sx = 1; sy = 1; }"
+          "else if (pos === 'tr') { vx = box.x + box.w; vy = box.y; sx = -1; sy = 1; }"
+          "else if (pos === 'bl') { vx = box.x; vy = box.y + box.h; sx = 1; sy = -1; }"
+          "else if (pos === 'br') { vx = box.x + box.w; vy = box.y + box.h; sx = -1; sy = -1; }"
+          "else { vx = box.x + box.w / 2; vy = box.y + box.h / 2; sx = 1; sy = 1; }"
+          "var r = function(n) { return Math.round(n * 1000) / 1000; };"
+          "var d = 'M ' + r(vx) + ',' + r(vy) + ' L ' + r(vx + sx * legX) + ',' + r(vy) +"
+          "' L ' + r(vx) + ',' + r(vy + sy * legY) + ' Z';"
+          "var p = doc.createElementNS('http://www.w3.org/2000/svg', 'path');"
+          "p.setAttribute('d', d);"
+          "p.setAttribute('fill', ANCHOR_FILL);"
+          "p.setAttribute('stroke', 'none');"
+          "return p;"
+          "}"
+          // Replaces whatever anchor the file had - Shaper allows only one
+          // per object, so adding without removing would be invalid.
+          "function setAnchor(svgEl, pos) {"
+          "var existing = svgEl.querySelectorAll('[data-anchor]');"
+          "for (var i = 0; i < existing.length; i++) existing[i].parentNode.removeChild(existing[i]);"
+          "if (!pos) return true;"
+          "var box = svgContentBox(svgEl);"
+          "if (!box || box.w <= 0 || box.h <= 0) return false;"
+          "var p = buildAnchorPath(svgEl.ownerDocument || document, box, pos);"
+          "p.setAttribute('data-anchor', '1');"
+          "svgEl.appendChild(p);"
+          "return true;"
+          "}"
+          // getBBox() and getComputedStyle() both return nothing useful for
+          // an element that was parsed but never laid out, so anything that
+          // needs either has to happen while the SVG is attached. Parks it
+          // offscreen, runs fn, then takes the holder away again.
+          "function withRenderedSvg(svgEl, fn) {"
+          "var holder = document.createElement('div');"
+          "holder.setAttribute('style', 'position:absolute;left:-10000px;top:0;width:800px');"
+          "document.body.appendChild(holder);"
+          "holder.appendChild(svgEl);"
+          "try { return fn(); } finally { holder.parentNode.removeChild(holder); }"
+          "}"
+          "function stripAnchorMarks(svgEl) {"
+          "var marked = svgEl.querySelectorAll('[data-anchor]');"
+          "for (var i = 0; i < marked.length; i++) marked[i].removeAttribute('data-anchor');"
+          "}"
+          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, anchorPos) {"
           "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
           "if (doc.querySelector('parsererror')) { throw new Error('Could not parse SVG'); }"
           "var svgEl = doc.documentElement;"
@@ -1450,15 +1582,27 @@ static String renderPage() {
           "if (depthVal !== '' && depthVal !== null && !isNaN(parseFloat(depthVal))) {"
           "depthAttr = parseFloat(depthVal) + depthUnit;"
           "}"
+          "return withRenderedSvg(svgEl, function() {"
+          // Find the anchors FIRST, so the cut-type loop below can skip
+          // them. Without this, uploading an Affinity file that already
+          // had an anchor while also choosing a blanket cut type would
+          // recolor the anchor and destroy it - the same bug the per-line
+          // editor had, on the other code path.
+          "markAnchors(svgEl);"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) {"
+          "if (shapes[i].getAttribute('data-anchor')) continue;"
           "if (cutType) {"
           "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutType', cutType);"
           "applyShaperCutColors(shapes[i], cutType);"
           "}"
           "if (depthAttr) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutDepth', depthAttr);"
           "}"
-          "return new XMLSerializer().serializeToString(doc);"
+          // '' means "leave whatever anchor the file has alone".
+          "if (anchorPos) setAnchor(svgEl, anchorPos === 'none' ? '' : anchorPos);"
+          "stripAnchorMarks(svgEl);"
+          "return new XMLSerializer().serializeToString(svgEl);"
+          "});"
           "}"
           // -----------------------------------------------------------
           // Per-line cut editor (file list "Cut type" cell -> modal).
@@ -1570,6 +1714,11 @@ static String renderPage() {
           "cutEditorRecolor(el);"
           "var hit = el.cloneNode(false);"
           "hit.setAttribute('data-hit-proxy', '1');"
+          // cloneNode copies data-anchor along with everything else, which
+          // would make every [data-anchor] query count the invisible proxy
+          // as a second anchor - and Shaper allows only one. The marker
+          // belongs to the real shape only.
+          "hit.removeAttribute('data-anchor');"
           "hit.style.fill = 'none';"
           "hit.style.stroke = 'transparent';"
           "hit.style.strokeWidth = '14';"
@@ -1637,6 +1786,35 @@ static String renderPage() {
           "}"
           "cutEditorRecolor(el);"
           "updateSelectionSummary();"
+          "}"
+          "function handleEditAnchorChange() {"
+          "var sel = document.getElementById('editAnchor');"
+          "var pos = sel.value;"
+          "if (pos === 'keep' || !cutEditorState.svgEl) return;"
+          "var had = cutEditorState.svgEl.querySelectorAll('[data-anchor]').length > 0;"
+          // Replacing a hand-made anchor throws away geometry the user
+          // positioned deliberately, and it cannot be undone from here, so
+          // it is worth one confirmation rather than a silent swap.
+          "if (had) {"
+          "var msg = (pos === 'none')"
+          "? 'Remove the custom anchor from this file?'"
+          ": 'This file already has a custom anchor. Replace it with a standard one? The original position will be lost.';"
+          "if (!confirm(msg)) { sel.value = 'keep'; return; }"
+          "}"
+          "var ok = setAnchor(cutEditorState.svgEl, pos === 'none' ? '' : pos);"
+          "if (!ok) {"
+          "document.getElementById('cutEditorStatus').textContent = 'Could not work out where the drawing is, so no anchor was placed.';"
+          "sel.value = 'keep';"
+          "return;"
+          "}"
+          "var added = cutEditorState.svgEl.querySelector('[data-anchor]');"
+          "if (added) cutEditorInitShape(added);"
+          "cutEditorState.dirty = true;"
+          "sel.value = 'keep';"
+          "updateAnchorInfo();"
+          "document.getElementById('cutEditorStatus').textContent = (pos === 'none')"
+          "? 'Anchor removed - click Save changes to write this to the file.'"
+          ": 'Anchor placed - click Save changes to write this to the file.';"
           "}"
           "function updateAnchorInfo() {"
           "var el = document.getElementById('cutEditorAnchorInfo');"
@@ -1723,6 +1901,9 @@ static String renderPage() {
           "cloneEl.removeAttribute('style');"
           "var styledEls = cloneEl.querySelectorAll('[style]');"
           "for (var s = 0; s < styledEls.length; s++) styledEls[s].removeAttribute('style');"
+          // data-anchor is ours, for preview and protection only - it has
+          // no meaning to Shaper and must not end up in the saved file.
+          "stripAnchorMarks(cloneEl);"
           "var svgText = new XMLSerializer().serializeToString(cloneEl);"
           "var fd = new FormData();"
           "fd.append('file', new Blob([svgText], {type: 'image/svg+xml'}), cutEditorState.name);"
@@ -1750,6 +1931,7 @@ static String renderPage() {
           "var cutType = document.getElementById('cutType').value;"
           "var cutDepthVal = document.getElementById('cutDepth').value;"
           "var cutDepthUnit = document.getElementById('cutDepthUnit').value;"
+          "var anchorPos = document.getElementById('uploadAnchor').value;"
           "status.textContent = 'Preparing ' + files.length + ' file(s)...';"
           "var jobs = [];"
           "for (var i = 0; i < files.length; i++) {"
@@ -1764,12 +1946,12 @@ static String renderPage() {
           "if (skippedParts.length) msg += ', skipped ' + skippedParts.join(', ');"
           "var svgName = f.name.replace(/\\.dxf$/i, '') + '.svg';"
           "var svgOut = result.svg;"
-          "if (cutType || cutDepthVal) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit);"
+          "if (cutType || cutDepthVal || anchorPos) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit, anchorPos);"
           "jobs.push({name: f.name, svgName: svgName, blob: new Blob([svgOut], {type: 'image/svg+xml'}), msg: msg});"
           "} else {"
-          "if (cutType || cutDepthVal) {"
+          "if (cutType || cutDepthVal || anchorPos) {"
           "var svgText = await f.text();"
-          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit);"
+          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit, anchorPos);"
           "jobs.push({name: f.name, svgName: f.name, blob: new Blob([svgText], {type: 'image/svg+xml'})});"
           "} else {"
           "jobs.push({name: f.name, svgName: f.name, blob: f});"
