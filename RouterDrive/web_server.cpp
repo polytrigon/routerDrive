@@ -1151,6 +1151,12 @@ static String renderPage() {
           "</div>" // .cut-legend
           "</div>" // .cut-editor-viewer
           "<div class='cut-editor-panel'>"
+          // Says up front whether this file carries a Shaper custom anchor.
+          // The anchor is already drawn in red and protected from editing,
+          // but a red triangle tucked into a corner of a busy drawing is
+          // easy to miss, and "is my anchor still in here?" is exactly the
+          // question someone opens this dialog worrying about.
+          "<p id='cutEditorAnchorInfo' class='sub'></p>"
           "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
           "<select id='editCutType' class='full-width'>"
           "<option value='' selected>Cut type: choose one</option>"
@@ -1505,6 +1511,7 @@ static String renderPage() {
           "document.getElementById('cutEditorTitle').textContent = 'Edit cut types: ' + name;"
           "document.getElementById('cutEditorSvgWrap').innerHTML = '<p class=\"sub\">Loading...</p>';"
           "document.getElementById('cutEditorStatus').textContent = '';"
+          "document.getElementById('cutEditorAnchorInfo').textContent = '';"
           "document.getElementById('editCutType').value = '';"
           "updateSelectionSummary();"
           "document.getElementById('cutEditorOverlay').style.display = 'flex';"
@@ -1541,6 +1548,7 @@ static String renderPage() {
           "cutEditorState.svgEl = svgEl;"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) cutEditorInitShape(shapes[i]);"
+          "updateAnchorInfo();"
           "}).catch(function(err) {"
           "document.getElementById('cutEditorSvgWrap').innerHTML = '<p style=\"color:#b00\">' + err.message + '</p>';"
           "});"
@@ -1629,6 +1637,14 @@ static String renderPage() {
           "}"
           "cutEditorRecolor(el);"
           "updateSelectionSummary();"
+          "}"
+          "function updateAnchorInfo() {"
+          "var el = document.getElementById('cutEditorAnchorInfo');"
+          "if (!cutEditorState.svgEl) { el.textContent = ''; return; }"
+          "var found = cutEditorState.svgEl.querySelectorAll('[data-anchor]').length;"
+          "el.textContent = found"
+          "? 'Anchor: custom anchor in this file (shown in red) - it will be left exactly as it is.'"
+          ": 'Anchor: none in this file. The Origin will use whichever of its own anchor points you pick on the tool.';"
           "}"
           "function updateSelectionSummary() {"
           "var n = cutEditorState.selected.length;"

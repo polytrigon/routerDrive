@@ -136,6 +136,12 @@ editor shows it in red, won't let you select it, and won't write a cut
 type onto it - click it and it just explains what it is. Your anchor comes
 through untouched.
 
+The panel also tells you straight away whether the file has one, so you
+don't have to go hunting for a small red triangle in a busy drawing.
+Having a custom anchor doesn't take the tool's own anchor buttons away
+either - the Origin can switch between them, and a **USE CUSTOM ANCHOR**
+button brings yours back.
+
 If you use the Origin's own anchor buttons instead (the nine corner and
 edge points on the tool), none of this applies - that choice is made on
 the machine and isn't part of the file at all.
