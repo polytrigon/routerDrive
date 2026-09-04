@@ -2,10 +2,17 @@
  * RouterDrive - DXF to SVG converter (runs in the browser, before upload).
  *
  * Scope, deliberately: LINE, ARC, CIRCLE, LWPOLYLINE (incl. bulge arcs) and
- * SPLINE entities. TEXT/MTEXT are dropped - convert text to outline curves
- * in your CAD tool before export (Onshape etc. usually call this "explode
- * text" or "convert to sketch geometry"), or upload a finished SVG directly
- * if a design needs real lettering.
+ * SPLINE entities. Text placed with Onshape's Text tool and exported
+ * directly - no manual "explode" step needed - already comes out as this
+ * kind of plain line/arc geometry (confirmed against a real Onshape
+ * export), so ordinary text just works. What's still NOT supported is a
+ * native DXF TEXT/MTEXT entity - the kind that references a font instead
+ * of carrying its own outline geometry, which some other CAD tools may
+ * still export - those are silently dropped, since there's no font
+ * renderer here. If your tool exports text that way, convert it to
+ * outline curves first (Onshape calls this "explode" or "convert to
+ * sketch geometry"), or upload a finished SVG directly if a design needs
+ * real lettering.
  *
  * Design choice: every curve (ARC, CIRCLE, LWPOLYLINE bulge segments,
  * SPLINE) is tessellated into a plain polyline rather than emitted as a

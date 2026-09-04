@@ -175,7 +175,7 @@ void wifiPortalResetCredentials() {
 
 String wifiPortalStatusText() {
   if (state == WIFI_STATE_STA) {
-    String s = "Connected to \"" + WiFi.SSID() + "\" (" + String(WiFi.RSSI()) + " dBm) - http://";
+    String s = "Connected to \"" + WiFi.SSID() + "\" - http://";
     s += HOSTNAME;
     s += ".local/  (or http://";
     s += WiFi.localIP().toString();

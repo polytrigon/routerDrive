@@ -42,6 +42,12 @@ static bool flashIsError = false;
 // once at the end - and is cleared only once actually displayed.
 static std::vector<String> justUploadedNames;
 
+// Set by renderFilesSection() on every render and read right afterward by
+// renderPage() to build the Upload section's folder dropdown, without
+// mounting storage a second time in the same page load.
+static std::vector<String> lastFolderList;
+static String lastViewedFolder;
+
 // Tracks every file part seen during one /upload POST (there can be more
 // than one now that the form allows selecting multiple files at once), so
 // handleUploadDone() can report an accurate "uploaded N files" - or list
@@ -70,12 +76,46 @@ static String basenameOf(const String &path) {
   return slash >= 0 ? path.substring(slash + 1) : path;
 }
 
-static String joinFolder(const String &basename) {
-  String folder = SVG_FOLDER;
-  if (!folder.endsWith("/")) {
-    folder += "/";
+// Path to a folder (root when folder is empty), no trailing slash except
+// for the root "/" itself - e.g. "/" or "/projectA". Folders are a single
+// level deep only: `folder` is always one plain name, never itself
+// containing a "/".
+static String folderDirPath(const String &folder) {
+  String path = SVG_FOLDER;
+  if (!path.endsWith("/")) {
+    path += "/";
   }
-  return folder + basename;
+  if (folder.length() > 0) {
+    path += folder;
+  }
+  return path;
+}
+
+static String joinFolder(const String &folder, const String &basename) {
+  String path = folderDirPath(folder);
+  if (!path.endsWith("/")) {
+    path += "/";
+  }
+  return path + basename;
+}
+
+static const int MAX_FOLDER_NAME_LEN = 24;
+
+// Folder names are a single path segment the user typed (via the "+ New
+// folder..." prompt) - keep them boring on purpose: letters, digits,
+// spaces, "-", "_", nothing that could climb out of SVG_FOLDER or trip up
+// FAT's shorter-name quirks. Re-checked server-side on every upload/delete
+// even though the UI only ever offers names that already passed this.
+static bool isValidFolderName(const String &name) {
+  if (name.length() == 0 || name.length() > MAX_FOLDER_NAME_LEN) return false;
+  if (name == "." || name == "..") return false;
+  if (name[0] == ' ' || name[name.length() - 1] == ' ') return false;
+  for (size_t i = 0; i < name.length(); i++) {
+    char c = name[i];
+    bool ok = isalnum((unsigned char)c) || c == ' ' || c == '-' || c == '_';
+    if (!ok) return false;
+  }
+  return true;
 }
 
 static String htmlEscape(const String &in) {
@@ -140,7 +180,7 @@ static String formatDateTime(time_t t) {
   struct tm tmVal;
   localtime_r(&t, &tmVal);
   char buf[20];
-  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tmVal);
+  strftime(buf, sizeof(buf), "%m/%d/%Y", &tmVal);
   return String(buf);
 }
 
@@ -152,7 +192,68 @@ struct FileEntry {
   String name;
   size_t size;
   time_t mtime;
+  String cutType; // raw shaper:cutType value, e.g. "outside" - see readShaperInfo()
+  String toolDia;  // raw shaper:toolDia value, e.g. "0.25 in"
 };
+
+// Every shape this app writes shaper:* attributes onto carries the same
+// cutType/toolDia - applyShaperMetadata() in the page script applies one
+// chosen type to the whole file (see architecture doc), so whichever
+// occurrence comes first in the file represents the whole thing. Not a
+// full XML parser: this app controls the exact attribute syntax it
+// writes, so a bounded plain-text scan for '<name>="value"' is enough -
+// avoids pulling in an XML library just to look up two strings. Kept
+// deliberately small (not "read the whole file") since this runs once
+// per file while building the folder listing, on a board with limited
+// SRAM already under pressure from Wi-Fi/WebServer buffers - a large
+// heap allocation here, repeated per file, is a worse tradeoff than
+// occasionally missing the columns on a file whose first shape has an
+// unusually long "d" attribute (lots of tessellated points) ahead of
+// its shaper:* attributes; those files just show "-" in Cut type/Bit
+// size, same as a file that never went through the cut-type feature.
+static const size_t SHAPER_SCAN_LIMIT = 4096;
+
+static String extractQuotedAttr(const String &hay, const String &attrName) {
+  String needle = attrName + "=\"";
+  int idx = hay.indexOf(needle);
+  if (idx < 0) return "";
+  int start = idx + needle.length();
+  int end = hay.indexOf('"', start);
+  if (end < 0) return "";
+  return hay.substring(start, end);
+}
+
+// Reads up to SHAPER_SCAN_LIMIT bytes from the front of an already-open
+// file handle (left at its current read position - call this before any
+// other read on the same handle, and before the handle is closed) and
+// pulls out shaper:cutType/shaper:toolDia if present. A plain SVG never
+// run through the cut-type feature (or uploaded with cut type left
+// "unchanged") leaves both blank - the file list shows "-" for those.
+static void readShaperInfo(File &f, String &cutType, String &toolDia) {
+  cutType = "";
+  toolDia = "";
+  size_t toRead = f.size();
+  if (toRead > SHAPER_SCAN_LIMIT) toRead = SHAPER_SCAN_LIMIT;
+  if (toRead == 0) return;
+  char *buf = new char[toRead + 1];
+  size_t n = f.read((uint8_t *)buf, toRead);
+  buf[n] = '\0';
+  String content(buf);
+  delete[] buf;
+  cutType = extractQuotedAttr(content, "shaper:cutType");
+  toolDia = extractQuotedAttr(content, "shaper:toolDia");
+}
+
+// Display label for the file list's Cut type column - mirrors the Upload
+// section's cutType <select> option text exactly (see renderPage()).
+static String cutTypeLabel(const String &raw) {
+  if (raw == "outside") return "Outside";
+  if (raw == "inside") return "Inside";
+  if (raw == "pocket") return "Pocket";
+  if (raw == "online") return "On Line";
+  if (raw == "guide") return "Guide";
+  return "-";
+}
 
 static bool nameContainsCI(const String &name, const String &needleLower) {
   String hay = name;
@@ -170,9 +271,45 @@ static String renderFilesSection() {
     return "<h2>Files</h2><p style='color:#b00'>Could not read storage.</p>";
   }
 
+  // Subfolders directly under SVG_FOLDER (one level only).
+  std::vector<String> folders;
+  {
+    File topDir = FFat.open(SVG_FOLDER);
+    if (topDir && topDir.isDirectory()) {
+      File f = topDir.openNextFile();
+      while (f) {
+        if (f.isDirectory()) {
+          String name = basenameOf(String(f.name()));
+          // Skip OS-generated junk directories (macOS ".Trashes",
+          // ".fseventsd", ".Spotlight-V100", etc. show up on any FAT/
+          // exFAT volume a Mac has mounted) - never something a user
+          // created through this UI, since isValidFolderName() forbids
+          // a leading ".".
+          if (!name.startsWith(".")) {
+            folders.push_back(name);
+          }
+        }
+        f.close();
+        f = topDir.openNextFile();
+      }
+    }
+    topDir.close();
+  }
+  std::sort(folders.begin(), folders.end());
+
+  String viewFolder;
+  if (server.hasArg("dir")) {
+    viewFolder = server.arg("dir");
+  }
+  viewFolder.trim();
+  bool folderExists = std::find(folders.begin(), folders.end(), viewFolder) != folders.end();
+  if (viewFolder.length() > 0 && !folderExists) {
+    viewFolder = ""; // unknown/stale folder (deleted, or a tampered link) - fall back to root
+  }
+
   std::vector<FileEntry> entries;
   {
-    File dir = FFat.open(SVG_FOLDER);
+    File dir = FFat.open(folderDirPath(viewFolder));
     if (dir && dir.isDirectory()) {
       File f = dir.openNextFile();
       while (f) {
@@ -181,6 +318,7 @@ static String renderFilesSection() {
           e.name = basenameOf(String(f.name()));
           e.size = f.size();
           e.mtime = f.getLastWrite();
+          readShaperInfo(f, e.cutType, e.toolDia);
           entries.push_back(e);
         }
         f.close();
@@ -189,9 +327,38 @@ static String renderFilesSection() {
     }
     dir.close(); // must close all handles before storageEndAppAccess() unmounts
   }
+
+  // Filenames per folder (root + every subfolder), for the upload JS's
+  // overwrite-conflict check - it can target a different folder than the
+  // one being browsed here via its own folder dropdown, so it needs every
+  // folder's names, not just this page's.
+  std::vector<String> folderKeys;
+  std::vector<std::vector<String>> folderFiles;
+  folderKeys.push_back("");
+  for (size_t k = 0; k < folders.size(); k++) folderKeys.push_back(folders[k]);
+  for (size_t k = 0; k < folderKeys.size(); k++) {
+    std::vector<String> names;
+    File fdir = FFat.open(folderDirPath(folderKeys[k]));
+    if (fdir && fdir.isDirectory()) {
+      File f = fdir.openNextFile();
+      while (f) {
+        if (!f.isDirectory()) names.push_back(basenameOf(String(f.name())));
+        f.close();
+        f = fdir.openNextFile();
+      }
+    }
+    fdir.close();
+    folderFiles.push_back(names);
+  }
+
   size_t used = FFat.usedBytes();
   size_t total = FFat.totalBytes();
   storageEndAppAccess(false); // just reading, nothing changed - no need to nudge the host
+
+  // Stashed for renderPage() to reuse when it builds the Upload section's
+  // folder dropdown right after this call, without mounting storage again.
+  lastFolderList = folders;
+  lastViewedFolder = viewFolder;
 
   std::sort(entries.begin(), entries.end(), [](const FileEntry &a, const FileEntry &b) {
     return a.name < b.name;
@@ -227,12 +394,39 @@ static String renderFilesSection() {
 
   String html = "<h2>Files</h2>";
 
+  // Folder nav: a dropdown (always shown, even with zero folders yet, so
+  // "+ New folder..." is always reachable from here) navigates between
+  // root and every existing folder. data-current lets the JS revert the
+  // select if "+ New folder..." is cancelled or rejected. "Delete this
+  // folder" lives down by the Delete/Move buttons below, not here - see
+  // the .file-actions row further down.
+  html += "<p class='sub'>";
+  html += "<select id='dirNav' onchange='handleDirNavChange()' data-current='" + htmlEscape(viewFolder) + "'>";
+  html += String("<option value=''") + (viewFolder.length() == 0 ? " selected" : "") + ">Folder: HOME</option>";
+  for (size_t i = 0; i < folders.size(); i++) {
+    bool sel = (folders[i] == viewFolder);
+    html += "<option value='" + htmlEscape(folders[i]) + "'" + (sel ? " selected" : "") + ">Folder: " + htmlEscape(folders[i]) + "</option>";
+  }
+  html += "<option value='__new__'>+ New folder...</option>";
+  html += "</select>";
+  // Hidden form for "+ New folder..." (see handleDirNavChange in the page
+  // script) - a real POST + server-side 303 redirect, same pattern as every
+  // other mutation on this page, rather than a fetch() that a plain-form
+  // ESP32 WebServer round trip is more reliably GET-able afterward.
+  html += "<form id='mkdirForm' method='POST' action='/mkdir' style='display:none'>"
+          "<input type='hidden' name='name' id='mkdirName'></form>";
+  html += "</p>";
+
   if (showControls) {
     html += "<form method='GET' action='/' class='search'>";
+    if (viewFolder.length() > 0) {
+      html += "<input type='hidden' name='dir' value='" + htmlEscape(viewFolder) + "'>";
+    }
     html += "<input type='text' name='q' placeholder='Search files...' value='" + htmlEscape(query) + "'> ";
     html += "<button type='submit'>Search</button>";
     if (query.length() > 0) {
-      html += " <a href='/'>Clear</a>";
+      String clearHref = viewFolder.length() > 0 ? ("/?dir=" + urlEncode(viewFolder)) : "/";
+      html += " <a href='" + clearHref + "'>Clear</a>";
     }
     html += "</form>";
   }
@@ -245,11 +439,16 @@ static String renderFilesSection() {
 
   // One form wraps the whole table so any number of checked rows can be
   // deleted in a single POST - see handleDelete(), which now loops over
-  // every repeated "name" field instead of assuming exactly one.
-  html += "<form id='deleteForm' method='POST' action='/delete' onsubmit=\"return confirmBatchDelete()\">";
-  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th></tr>";
+  // every repeated "name" field instead of assuming exactly one. The
+  // hidden "dir" field tells handleDelete() which folder these names
+  // actually live in.
+  html += "<form id='deleteForm' method='POST' action='/delete'>";
+  if (viewFolder.length() > 0) {
+    html += "<input type='hidden' name='dir' value='" + htmlEscape(viewFolder) + "'>";
+  }
+  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th><th>Cut type</th><th>Bit size</th></tr>";
   if (filteredCount == 0) {
-    html += String("<tr><td colspan=4><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
+    html += String("<tr><td colspan=6><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
   } else {
     int startIdx = (page - 1) * FILES_PER_PAGE;
     int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
@@ -257,39 +456,100 @@ static String renderFilesSection() {
       const FileEntry &e = filtered[i];
       bool isNew = std::find(justUploaded.begin(), justUploaded.end(), e.name) != justUploaded.end();
       String checkmark = isNew ? " <span style='color:#0a0' title='Just uploaded'>&#10003;</span>" : "";
-      html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "'></td>";
-      html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td></tr>";
+      html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
+      html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
+              "<td>" + cutTypeLabel(e.cutType) + "</td><td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : "-") + "</td></tr>";
     }
   }
-  html += "<tr><td colspan=4 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
+  html += "<tr><td colspan=6 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
   html += "</table>";
-  if (filteredCount > 0) {
-    html += "<button type='submit'>Delete selected</button>";
+  // A move destination exists whenever there's somewhere other than the
+  // currently-viewed folder to put files: always true once you're inside
+  // any folder (root is always a valid destination), and true at root
+  // once at least one folder exists.
+  bool hasMoveDest = viewFolder.length() > 0 || !folders.empty();
+  bool showDeleteFolder = viewFolder.length() > 0;
+  if (filteredCount > 0 || showDeleteFolder) {
+    // Delete/Move start disabled - updateBatchButtons() (in the page
+    // script) enables them once at least one row is checked. "Delete
+    // this folder" doesn't depend on any row being checked (it acts on
+    // the folder itself), so it's laid out separately via .file-actions
+    // (left group: Delete/Move; right group: Delete this folder) rather
+    // than sharing their disabled-until-selected state, and is rendered
+    // even when the folder is empty (filteredCount == 0) so an empty
+    // folder can still be removed from here.
+    html += "<div class='file-actions'><div>";
+    if (filteredCount > 0) {
+      html += "<button type='submit' id='deleteBtn' formaction='/delete' onclick='return confirmBatchDelete()' disabled>Delete</button>";
+      if (hasMoveDest) {
+        // "Move" no longer submits directly - it just reveals #movePanel
+        // below (destination select + confirm), so the always-visible
+        // "Move to:" dropdown doesn't sit in the way when nobody's
+        // moving anything.
+        html += " <button type='button' id='moveBtn' onclick='showMovePanel()' disabled>Move</button>";
+      }
+    }
+    html += "</div>";
+    if (showDeleteFolder) {
+      html += "<button type='submit' formaction='/deletefolder' class='link-btn' onclick='return confirmDeleteFolder()'>Delete this folder</button>";
+    }
+    html += "</div>";
   }
   html += "</form>";
+  if (filteredCount > 0 && hasMoveDest) {
+    // Rendered outside <form id='deleteForm'> (below it in the DOM, not
+    // nested inside), so both the destination select and the confirm
+    // button carry an explicit form='deleteForm' attribute - HTML lets a
+    // control outside a <form> still submit with/into it that way, which
+    // is what makes the checked rowchecks (and the chosen dest) travel
+    // together in the one POST, same formaction-override trick already
+    // used for Delete/Move selected above.
+    html += "<div id='movePanel' style='display:none'>";
+    html += "<p class='sub'>Move selected file(s) to:</p>";
+    html += "<select name='dest' id='moveDest' form='deleteForm'>";
+    if (viewFolder.length() > 0) {
+      html += "<option value=''>HOME</option>";
+    }
+    for (size_t i = 0; i < folders.size(); i++) {
+      if (folders[i] == viewFolder) continue;
+      html += "<option value='" + htmlEscape(folders[i]) + "'>" + htmlEscape(folders[i]) + "</option>";
+    }
+    html += "</select> ";
+    html += "<button type='submit' id='confirmMoveBtn' form='deleteForm' formaction='/move' onclick='return confirmMove()'>Confirm</button> ";
+    html += "<button type='button' id='cancelMoveBtn' onclick=\"document.getElementById('movePanel').style.display='none'\">Cancel</button>";
+    html += "</div>";
+  }
 
   if (showControls && totalPages > 1) {
     String qParam = query.length() > 0 ? ("&q=" + urlEncode(query)) : "";
+    String dParam = viewFolder.length() > 0 ? ("&dir=" + urlEncode(viewFolder)) : "";
     html += "<p class='pager'>";
     if (page > 1) {
-      html += "<a href='/?page=" + String(page - 1) + qParam + "'>&laquo; Prev</a> ";
+      html += "<a href='/?page=" + String(page - 1) + qParam + dParam + "'>&laquo; Prev</a> ";
     }
     html += "Page " + String(page) + " of " + String(totalPages) + " ";
     if (page < totalPages) {
-      html += "<a href='/?page=" + String(page + 1) + qParam + "'>Next &raquo;</a>";
+      html += "<a href='/?page=" + String(page + 1) + qParam + dParam + "'>Next &raquo;</a>";
     }
     html += "</p>";
   }
 
-  // Every existing filename (not just this page's/search's slice), for
-  // the overwrite-warning check in both upload paths below. Small enough
-  // (file names, not contents) to just inline as a JS array.
-  html += "<script>var existingFiles = [";
-  for (size_t i = 0; i < entries.size(); i++) {
-    if (i > 0) html += ",";
-    html += "'" + jsStringEscape(entries[i].name) + "'";
+  // Filenames per folder, for the overwrite-warning check in both upload
+  // paths below - keyed by folder name ("" = root) so the check works no
+  // matter which folder the upload dropdown targets, independent of
+  // whichever folder is currently being browsed above.
+  html += "<script>var existingFilesByFolder = {";
+  for (size_t k = 0; k < folderKeys.size(); k++) {
+    if (k > 0) html += ",";
+    html += "'" + jsStringEscape(folderKeys[k]) + "':[";
+    const std::vector<String> &names = folderFiles[k];
+    for (size_t i = 0; i < names.size(); i++) {
+      if (i > 0) html += ",";
+      html += "'" + jsStringEscape(names[i]) + "'";
+    }
+    html += "]";
   }
-  html += "];</script>";
+  html += "};</script>";
 
   return html;
 }
@@ -445,13 +705,59 @@ static String renderPage() {
 
   html += "<h2>Upload files</h2>";
   html += "<p class='sub'>Select DXF and/or SVG files, mixed together if you like. DXFs are automatically "
-          "converted to the SVG format the Origin requires (handles most shapes, but not text - convert "
-          "externally and re-select the result here if one doesn't come out clean); SVGs just upload as-is, so "
-          "the units dropdown only matters for DXFs. You can select more than one file at once.</p>";
-  html += "<input type='file' id='uploadFile' accept='.dxf,.svg' multiple> ";
+          "converted to the SVG format the Origin requires (handles most shapes, including text). Optionally "
+          "pick a folder to upload into, and blanket-assign a Shaper cut type, depth, and tool diameter to "
+          "each file below.</p>";
+  html += "<input type='file' id='uploadFile' accept='.dxf,.svg' multiple>";
+  html += "<br><br>";
   html += "<select id='dxfUnit' class='full-width'><option value='mm' selected>Units: mm</option><option value='in'>Units: inches</option></select>";
   html += "<br><br>";
-  html += "<button type='button' id='uploadBtn' class='full-width'>Convert &amp; upload</button>";
+  html += "<select id='uploadFolder' class='full-width' onchange='handleFolderSelectChange()'>";
+  html += String("<option value=''") + (lastViewedFolder.length() == 0 ? " selected" : "") + ">Folder: HOME</option>";
+  for (size_t i = 0; i < lastFolderList.size(); i++) {
+    bool sel = (lastFolderList[i] == lastViewedFolder);
+    html += "<option value='" + htmlEscape(lastFolderList[i]) + "'" + (sel ? " selected" : "") + ">Folder: " + htmlEscape(lastFolderList[i]) + "</option>";
+  }
+  html += "<option value='__new__'>+ New folder...</option>";
+  html += "</select>";
+  html += "<br><br>";
+  html += "<select id='cutType' class='full-width' onchange='toggleToolDiaRow()'>"
+          "<option value='' selected>Cut type: unchanged</option>"
+          "<option value='outside'>Cut type: Outside</option>"
+          "<option value='inside'>Cut type: Inside</option>"
+          "<option value='pocket'>Cut type: Pocket</option>"
+          "<option value='online'>Cut type: On Line</option>"
+          "<option value='guide'>Cut type: Guide</option>"
+          "</select>";
+  html += "<br><br>";
+  html += "<div id='toolDiaWrap' style='display:none'>"
+          "<select id='toolDiaPreset' class='full-width' onchange='handleToolDiaPresetChange()'>"
+          "<option value='' selected>Tool diameter: choose one (required)</option>"
+          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
+          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
+          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
+          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
+          "<option value='3|mm'>Tool diameter: 3 mm</option>"
+          "<option value='6|mm'>Tool diameter: 6 mm</option>"
+          "<option value='8|mm'>Tool diameter: 8 mm</option>"
+          "<option value='10|mm'>Tool diameter: 10 mm</option>"
+          "<option value='__custom__'>Tool diameter: Custom...</option>"
+          "</select>"
+          "<br><br>"
+          "<div id='toolDiaCustomWrap' style='display:none'>"
+          "<div class='depth-row'>"
+          "<input type='number' id='toolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
+          "<select id='toolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
+          "</div>"
+          "<br><br>"
+          "</div>"
+          "</div>";
+  html += "<div class='depth-row'>"
+          "<input type='number' id='cutDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
+          "<select id='cutDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
+          "</div>";
+  html += "<br>";
+  html += "<button type='button' id='uploadBtn'>Convert &amp; upload</button>";
   html += "<p id='uploadStatus' class='sub'></p>";
 
   html += "<h2>Restart to update Origin's import list</h2>";
@@ -459,7 +765,7 @@ static String renderPage() {
           "in the Shaper Origin's import list. Click the Restart button below - it takes a few seconds and "
           "drops Wi-Fi briefly, but this page reconnects on its own once it's back. If restart ever doesn't do "
           "it, a physical unplug/replug of the USB cable always will.</p>";
-  html += "<form method='POST' action='/rescan' onsubmit=\"return confirm('Restart RouterDrive? Wi-Fi will drop for a few seconds.')\"><button type='submit' class='full-width'>Restart RouterDrive</button></form>";
+  html += "<form method='POST' action='/rescan' onsubmit=\"return confirm('Restart RouterDrive? Wi-Fi will drop for a few seconds.')\"><button type='submit'>Restart RouterDrive</button></form>";
 
   html += renderWifiSection();
 
@@ -468,6 +774,17 @@ static String renderPage() {
           "function toggleAllFiles(cb) {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck');"
           "for (var i = 0; i < boxes.length; i++) boxes[i].checked = cb.checked;"
+          "updateBatchButtons();"
+          "}"
+          "function updateBatchButtons() {"
+          "var anyChecked = document.querySelectorAll('#deleteForm .rowcheck:checked').length > 0;"
+          "var delBtn = document.getElementById('deleteBtn');"
+          "var moveBtn = document.getElementById('moveBtn');"
+          "if (delBtn) delBtn.disabled = !anyChecked;"
+          "if (moveBtn) moveBtn.disabled = !anyChecked;"
+          "}"
+          "function confirmDeleteFolder() {"
+          "return confirm('Deleting this folder will also delete all of the contents. Continue?');"
           "}"
           "function confirmBatchDelete() {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
@@ -475,14 +792,110 @@ static String renderPage() {
           "if (boxes.length === 1) return confirm('Delete ' + boxes[0].value + '?');"
           "return confirm('Delete ' + boxes.length + ' files?');"
           "}"
-          // existingFiles comes from the <script> the Files section emits,
-          // earlier in this same page.
-          "function findOverwriteConflicts(names) {"
+"function showMovePanel() {"
+          "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
+          "if (boxes.length === 0) { alert('Select at least one file to move.'); return; }"
+          "document.getElementById('movePanel').style.display = '';"
+          "}"
+          "function confirmMove() {"
+          "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
+          "if (boxes.length === 0) { alert('Select at least one file to move.'); return false; }"
+          "var destSel = document.getElementById('moveDest');"
+          "var destLabel = destSel.options[destSel.selectedIndex].textContent;"
+          "return confirm('Move ' + boxes.length + ' file(s) to ' + destLabel + '?');"
+          "}"
+          // dirNav comes from the Files section above - navigating just
+          // follows a link (GET), but "+ New folder..." needs a real POST
+          // to actually create the directory before there's anywhere to
+          // navigate to, so it's handled separately here rather than as
+          // a plain <option value>.
+          "function handleDirNavChange() {"
+          "var sel = document.getElementById('dirNav');"
+          "if (sel.value === '__new__') {"
+          "var name = prompt('New folder name (letters, numbers, spaces, - and _, up to 24 characters):');"
+          "if (name) { name = name.trim(); }"
+          "var valid = name && /^[A-Za-z0-9 _-]{1,24}$/.test(name) && name !== '.' && name !== '..' && name[0] !== ' ' && name[name.length - 1] !== ' ';"
+          "if (!valid) {"
+          "if (name) alert('That folder name is not allowed - use letters, numbers, spaces, - and _, up to 24 characters.');"
+          "sel.value = sel.dataset.current;"
+          "return;"
+          "}"
+"document.getElementById('mkdirName').value = name;"
+          "document.getElementById('mkdirForm').submit();"
+          "return;"
+          "}"
+          "location.href = sel.value ? ('/?dir=' + encodeURIComponent(sel.value)) : '/';"
+          "}"
+          // existingFilesByFolder comes from the <script> the Files section
+          // emits, earlier in this same page - keyed by folder name ("" = root).
+          "function findOverwriteConflicts(names, folder) {"
+          "var list = existingFilesByFolder[folder] || [];"
           "var conflicts = [];"
           "for (var i = 0; i < names.length; i++) {"
-          "if (existingFiles.indexOf(names[i]) !== -1) conflicts.push(names[i]);"
+          "if (list.indexOf(names[i]) !== -1) conflicts.push(names[i]);"
           "}"
           "return conflicts;"
+          "}"
+          "function handleFolderSelectChange() {"
+          "var sel = document.getElementById('uploadFolder');"
+          "if (sel.value === '__new__') {"
+          "var name = prompt('New folder name (letters, numbers, spaces, - and _, up to 24 characters):');"
+          "if (name) { name = name.trim(); }"
+          "var valid = name && /^[A-Za-z0-9 _-]{1,24}$/.test(name) && name !== '.' && name !== '..' && name[0] !== ' ' && name[name.length - 1] !== ' ';"
+          "if (!valid) {"
+          "if (name) alert('That folder name is not allowed - use letters, numbers, spaces, - and _, up to 24 characters.');"
+          "sel.value = sel.dataset.prev || '';"
+          "return;"
+          "}"
+          "var found = false;"
+          "for (var i = 0; i < sel.options.length; i++) {"
+          "if (sel.options[i].value === name) { found = true; break; }"
+          "}"
+          "if (!found) {"
+          "var opt = document.createElement('option');"
+          "opt.value = name;"
+          "opt.textContent = 'Folder: ' + name;"
+          "sel.insertBefore(opt, sel.options[sel.options.length - 1]);"
+          "}"
+          "sel.value = name;"
+          "}"
+          "sel.dataset.prev = sel.value;"
+          "}"
+          "function toggleToolDiaRow() {"
+          "var ct = document.getElementById('cutType').value;"
+          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
+          "document.getElementById('toolDiaWrap').style.display = needsOffset ? '' : 'none';"
+          "}"
+          "function handleToolDiaPresetChange() {"
+          "var isCustom = document.getElementById('toolDiaPreset').value === '__custom__';"
+          "document.getElementById('toolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
+          "}"
+          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, toolDiaVal, toolDiaUnit) {"
+          "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
+          "if (doc.querySelector('parsererror')) { throw new Error('Could not parse SVG'); }"
+          "var svgEl = doc.documentElement;"
+          "var SHAPER_NS = 'http://www.shapertools.com/namespaces/shaper';"
+          "var XMLNS_NS = 'http://www.w3.org/2000/xmlns/';"
+          "svgEl.setAttributeNS(XMLNS_NS, 'xmlns:shaper', SHAPER_NS);"
+          "var depthAttr = null;"
+          "if (depthVal !== '' && depthVal !== null && !isNaN(parseFloat(depthVal))) {"
+          "depthAttr = parseFloat(depthVal) + ' ' + depthUnit;"
+          "}"
+          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
+          "var toolDiaAttr = null;"
+          "if (needsOffset && toolDiaVal !== '' && toolDiaVal !== null && toolDiaVal !== undefined && !isNaN(parseFloat(toolDiaVal))) {"
+          "toolDiaAttr = parseFloat(toolDiaVal) + ' ' + toolDiaUnit;"
+          "}"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "for (var i = 0; i < shapes.length; i++) {"
+          "if (cutType) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutType', cutType);"
+          "if (depthAttr) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutDepth', depthAttr);"
+          "if (toolDiaAttr) {"
+          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
+          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
+          "}"
+          "}"
+          "return new XMLSerializer().serializeToString(doc);"
           "}"
           "document.getElementById('uploadBtn').addEventListener('click', async function() {"
           "var fileInput = document.getElementById('uploadFile');"
@@ -490,6 +903,24 @@ static String renderPage() {
           "if (!fileInput.files.length) { status.textContent = 'Choose a file first.'; return; }"
           "var files = Array.prototype.slice.call(fileInput.files);"
           "var unit = document.getElementById('dxfUnit').value;"
+          "var uploadFolder = document.getElementById('uploadFolder').value;"
+          "if (uploadFolder === '__new__') uploadFolder = '';"
+          "var cutType = document.getElementById('cutType').value;"
+          "var cutDepthVal = document.getElementById('cutDepth').value;"
+          "var cutDepthUnit = document.getElementById('cutDepthUnit').value;"
+          "var toolDiaPresetVal = document.getElementById('toolDiaPreset').value;"
+          "var toolDiaVal, toolDiaUnit;"
+          "if (toolDiaPresetVal === '__custom__') {"
+          "toolDiaVal = document.getElementById('toolDiaCustom').value;"
+          "toolDiaUnit = document.getElementById('toolDiaUnit').value;"
+          "} else if (toolDiaPresetVal) {"
+          "var toolDiaParts = toolDiaPresetVal.split('|');"
+          "toolDiaVal = toolDiaParts[0];"
+          "toolDiaUnit = toolDiaParts[1];"
+          "} else {"
+          "toolDiaVal = '';"
+          "toolDiaUnit = 'mm';"
+          "}"
           // Pass 1: convert every selected DXF client-side first (SVGs pass
           // through untouched). This means we know every output filename
           // before asking about overwrites, so the user gets one prompt
@@ -507,9 +938,17 @@ static String renderPage() {
           "for (var k in result.skipped) skippedParts.push(result.skipped[k] + ' ' + k);"
           "if (skippedParts.length) msg += ', skipped ' + skippedParts.join(', ');"
           "var svgName = f.name.replace(/\\.dxf$/i, '') + '.svg';"
-          "jobs.push({name: f.name, svgName: svgName, blob: new Blob([result.svg], {type: 'image/svg+xml'}), msg: msg});"
+          "var svgOut = result.svg;"
+          "if (cutType || cutDepthVal) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
+          "jobs.push({name: f.name, svgName: svgName, blob: new Blob([svgOut], {type: 'image/svg+xml'}), msg: msg});"
+          "} else {"
+          "if (cutType || cutDepthVal) {"
+          "var svgText = await f.text();"
+          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
+          "jobs.push({name: f.name, svgName: f.name, blob: new Blob([svgText], {type: 'image/svg+xml'})});"
           "} else {"
           "jobs.push({name: f.name, svgName: f.name, blob: f});"
+          "}"
           "}"
           "} catch (err) {"
           "jobs.push({name: f.name, error: err.message});"
@@ -537,7 +976,7 @@ static String renderPage() {
           "}"
           "nameCounts[original] = count + 1;"
           "}"
-          "var conflicts = findOverwriteConflicts(toUpload.map(function(j) { return j.svgName; }));"
+          "var conflicts = findOverwriteConflicts(toUpload.map(function(j) { return j.svgName; }), uploadFolder);"
           "if (conflicts.length && !confirm('This will overwrite: ' + conflicts.join(', ') + '. Continue?')) {"
           "status.textContent = 'Upload cancelled.';"
           "return;"
@@ -552,7 +991,7 @@ static String renderPage() {
           "try {"
           "var fd = new FormData();"
           "fd.append('file', j.blob, j.svgName);"
-          "var resp = await fetch('/upload', {method: 'POST', body: fd});"
+          "var resp = await fetch('/upload?folder=' + encodeURIComponent(uploadFolder), {method: 'POST', body: fd});"
           "if (resp.ok) { uploaded.push(j.svgName); }"
           "else { failed.push(j.svgName + ' (HTTP ' + resp.status + ')'); }"
           "} catch (err) {"
@@ -621,7 +1060,20 @@ static void handleUploadData() {
       uploadBatch.failed.push_back(base);
       return;
     }
-    uploadFile = FFat.open(joinFolder(base), FILE_WRITE);
+    // "folder" travels as a URL query param (see the upload JS) rather
+    // than a multipart field, since it's the same for every file in the
+    // batch and query args are readable here regardless of the POST
+    // body's content type. Re-validated server-side - never trust the
+    // client blindly, even though the UI only ever offers known-good
+    // names.
+    String folder = server.hasArg("folder") ? server.arg("folder") : "";
+    if (folder.length() > 0 && !isValidFolderName(folder)) {
+      folder = "";
+    }
+    if (folder.length() > 0 && !FFat.exists(folderDirPath(folder))) {
+      FFat.mkdir(folderDirPath(folder));
+    }
+    uploadFile = FFat.open(joinFolder(folder, base), FILE_WRITE);
     if (!uploadFile) {
       uploadBatch.failed.push_back(base);
     }
@@ -674,7 +1126,11 @@ static void handleUploadDone() {
   uploadBatch.failed.clear();
   ledApplyIdleState();
 
-  server.sendHeader("Location", "/");
+  String folder = server.hasArg("folder") ? server.arg("folder") : "";
+  if (folder.length() > 0 && !isValidFolderName(folder)) {
+    folder = "";
+  }
+  server.sendHeader("Location", folder.length() > 0 ? ("/?dir=" + urlEncode(folder)) : "/");
   server.send(303);
 }
 
@@ -682,6 +1138,12 @@ static void handleUploadDone() {
 // "name" - loop over every arg with that name instead of assuming exactly
 // one, so a single POST can remove any number of files at once.
 static void handleDelete() {
+  String folder = server.hasArg("dir") ? server.arg("dir") : "";
+  if (folder.length() > 0 && !isValidFolderName(folder)) {
+    folder = "";
+  }
+  String redirectTo = folder.length() > 0 ? ("/?dir=" + urlEncode(folder)) : "/";
+
   std::vector<String> names;
   for (int i = 0; i < server.args(); i++) {
     if (server.argName(i) == "name") {
@@ -690,7 +1152,7 @@ static void handleDelete() {
     }
   }
   if (names.empty()) {
-    server.sendHeader("Location", "/");
+    server.sendHeader("Location", redirectTo);
     server.send(303);
     return;
   }
@@ -701,7 +1163,7 @@ static void handleDelete() {
   std::vector<String> failed;
   if (storageBeginAppAccess()) {
     for (size_t i = 0; i < names.size(); i++) {
-      if (FFat.remove(joinFolder(names[i]))) {
+      if (FFat.remove(joinFolder(folder, names[i]))) {
         deleted.push_back(names[i]);
       } else {
         failed.push_back(names[i]);
@@ -724,7 +1186,155 @@ static void handleDelete() {
     flashIsError = true;
   }
   ledApplyIdleState();
+  server.sendHeader("Location", redirectTo);
+  server.send(303);
+}
+
+// Creates an empty folder on demand - used by the Files section's
+// "+ New folder..." dropdown entry, which (unlike the Upload section's
+// same-named entry) has no upload to piggyback the mkdir onto, since
+// browsing there doesn't necessarily involve uploading anything.
+static void handleMkdir() {
+  String name = server.hasArg("name") ? server.arg("name") : "";
+  name.trim();
+  String redirectTo = "/";
+  if (name.length() == 0 || !isValidFolderName(name)) {
+    flashMessage = "Invalid folder name";
+    flashIsError = true;
+    server.sendHeader("Location", redirectTo);
+    server.send(303);
+    return;
+  }
+  if (!storageBeginAppAccess()) {
+    flashMessage = "Could not access storage";
+    flashIsError = true;
+    server.sendHeader("Location", redirectTo);
+    server.send(303);
+    return;
+  }
+  String path = folderDirPath(name);
+  bool alreadyExists = FFat.exists(path);
+  bool ok = alreadyExists || FFat.mkdir(path);
+  storageEndAppAccess(!alreadyExists && ok); // only nudge the host if we actually changed something
+  if (ok) {
+    // Land the browser back on the folder that was just created, same as
+    // the Upload section does after an upload that created one.
+    redirectTo = "/?dir=" + urlEncode(name);
+  } else {
+    flashMessage = "Could not create folder";
+    flashIsError = true;
+  }
+  server.sendHeader("Location", redirectTo);
+  server.send(303);
+}
+
+// Deletes a folder and every file directly inside it (folders are one
+// level deep only, so there's never a nested folder to worry about, bar
+// stray OS junk - see the ".Trashes" filter in renderFilesSection() -
+// which would just make FFat.rmdir() fail below, a safe failure mode).
+static void handleDeleteFolder() {
+  String folder = server.hasArg("dir") ? server.arg("dir") : "";
+  folder.trim();
+  if (folder.length() == 0 || !isValidFolderName(folder)) {
+    server.sendHeader("Location", "/");
+    server.send(303);
+    return;
+  }
+
+  ledSet(LED_BLINK_FAST); // busy
+
+  bool ok = false;
+  if (storageBeginAppAccess()) {
+    String path = folderDirPath(folder);
+    File dir = FFat.open(path);
+    if (dir && dir.isDirectory()) {
+      File f = dir.openNextFile();
+      while (f) {
+        bool isDir = f.isDirectory();
+        String childName = basenameOf(String(f.name()));
+        f.close();
+        if (!isDir) {
+          FFat.remove(joinFolder(folder, childName));
+        }
+        f = dir.openNextFile();
+      }
+    }
+    dir.close(); // must close before either rmdir() or storageEndAppAccess() unmounts
+    ok = FFat.rmdir(path);
+    storageEndAppAccess(true);
+  }
+
+  flashMessage = ok ? ("Deleted folder " + folder) : ("Could not delete folder " + folder);
+  flashIsError = !ok;
+  ledApplyIdleState();
   server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+// Moves any number of checked files from one folder to another via
+// FFat.rename() (a real rename/move on the underlying FAT filesystem,
+// not a copy+delete) - see the Files section's "Move selected" button.
+static void handleMove() {
+  String srcFolder = server.hasArg("dir") ? server.arg("dir") : "";
+  if (srcFolder.length() > 0 && !isValidFolderName(srcFolder)) {
+    srcFolder = "";
+  }
+  String destFolder = server.hasArg("dest") ? server.arg("dest") : "";
+  if (destFolder.length() > 0 && !isValidFolderName(destFolder)) {
+    destFolder = "";
+  }
+  String redirectTo = srcFolder.length() > 0 ? ("/?dir=" + urlEncode(srcFolder)) : "/";
+
+  std::vector<String> names;
+  for (int i = 0; i < server.args(); i++) {
+    if (server.argName(i) == "name") {
+      String base = basenameOf(server.arg(i));
+      if (base.length() > 0) names.push_back(base);
+    }
+  }
+  if (names.empty() || srcFolder == destFolder) {
+    server.sendHeader("Location", redirectTo);
+    server.send(303);
+    return;
+  }
+
+  ledSet(LED_BLINK_FAST); // busy
+
+  std::vector<String> moved;
+  std::vector<String> failed;
+  if (storageBeginAppAccess()) {
+    if (destFolder.length() > 0 && !FFat.exists(folderDirPath(destFolder))) {
+      FFat.mkdir(folderDirPath(destFolder));
+    }
+    for (size_t i = 0; i < names.size(); i++) {
+      String from = joinFolder(srcFolder, names[i]);
+      String to = joinFolder(destFolder, names[i]);
+      if (FFat.exists(to)) {
+        failed.push_back(names[i] + " (already exists there)");
+      } else if (FFat.rename(from, to)) {
+        moved.push_back(names[i]);
+      } else {
+        failed.push_back(names[i]);
+      }
+    }
+    storageEndAppAccess(true);
+  } else {
+    failed = names;
+  }
+
+  if (failed.empty()) {
+    flashMessage = moved.size() == 1 ? ("Moved " + moved[0])
+                                      : ("Moved " + String(moved.size()) + " files");
+    flashIsError = false;
+  } else if (moved.empty()) {
+    flashMessage = "Could not move: " + joinNames(failed);
+    flashIsError = true;
+  } else {
+    flashMessage = "Moved " + String(moved.size()) + " file(s), failed: " + joinNames(failed);
+    flashIsError = true;
+  }
+  ledApplyIdleState();
+  server.sendHeader("Location", redirectTo);
   server.send(303);
 }
 
@@ -836,6 +1446,9 @@ void webServerInit() {
   server.on("/nowifi", HTTP_GET, handleNoWifi);
   server.on("/upload", HTTP_POST, handleUploadDone, handleUploadData);
   server.on("/delete", HTTP_POST, handleDelete);
+  server.on("/mkdir", HTTP_POST, handleMkdir);
+  server.on("/deletefolder", HTTP_POST, handleDeleteFolder);
+  server.on("/move", HTTP_POST, handleMove);
   server.on("/rescan", HTTP_POST, handleRescan);
   server.on("/led-toggle", HTTP_POST, handleLedToggle);
   server.on("/dxf2svg.js", HTTP_GET, handleDxfScript);

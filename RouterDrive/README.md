@@ -331,13 +331,16 @@ alongside them in the same batch.
   curved segments), and SPLINE. Curves are tessellated into short line
   segments before being written out, so there's no dependency on how any
   particular viewer interprets SVG arc commands.
-- **Not supported: TEXT/MTEXT.** There's no font-rendering available on
-  this converter, so any lettering is silently skipped (the status message
-  after conversion tells you how many text entities were dropped). If a
-  design needs real text, either convert the text to outline curves in
-  your CAD tool first (in Onshape, look for "convert to sketch geometry"
-  or similar on the text feature) before exporting the DXF, or skip
-  conversion entirely and export/upload a finished SVG instead.
+- **Text:** text placed with Onshape's Text tool and exported directly -
+  no need to explode or convert it to sketch geometry first - already
+  comes out as plain line/arc geometry, confirmed against a real Onshape
+  export, so it converts normally like any other shape. What's still not
+  supported is a native DXF TEXT/MTEXT entity (the kind that references a
+  font rather than carrying its own outline geometry, which some other
+  CAD tools may still export) - there's no font-rendering here, so those
+  are silently skipped (the status message after conversion tells you how
+  many were dropped). If your tool exports text that way, convert it to
+  outline curves first, or export/upload a finished SVG instead.
 - **Units:** source coordinates are assumed to be millimeters (matches
   Onshape's DXF export). Pick "Units: mm" or "Units: inches" before
   converting - this only changes the SVG's physical `width`/`height`, not
@@ -384,23 +387,160 @@ expected, uploading one file at a time is the fallback. The DXF
 converter's multi-file support doesn't depend on this, since it sends one
 upload request per file itself.
 
+## Cut type & cut depth
+
+The "Upload files" section has optional controls above the "Convert &
+upload" button: a **Cut type** dropdown (Outside / Inside / Pocket / On
+Line / Guide), a **Tool diameter** dropdown (only shown when the cut type
+needs one - see below), and a **Cut depth** field with a small unit
+dropdown (mm/in, defaults to mm). Set any of these and every shape in
+every file you're about to upload gets them stamped on, in-browser,
+before the file ever reaches the device - the ESP32 itself doesn't touch
+this, same "do it client-side in JS" approach as the DXF converter.
+
+The **Tool diameter** dropdown lists common router bit sizes (1/8", 1/4",
+3/8", 1/2" and 3mm, 6mm, 8mm, 10mm) so the common case is one click - pick
+"Custom..." to reveal a free-entry field with its own mm/in unit dropdown
+for anything not listed.
+
+This works by writing Origin's own `shaper:` SVG attributes (the
+`shaper:` XML namespace Origin itself uses - confirmed by inspecting a
+real Origin-exported SVG). Concretely, for a chosen cut type of `outside`
+with a 0.25in tool and no depth set, every `<path>`/`<rect>`/etc. in the
+file gets `shaper:cutType="outside"`, `shaper:toolDia="0.25 in"`, and
+`shaper:cutOffset="0in"` added, and the root `<svg>` gets a single
+`xmlns:shaper="http://www.shapertools.com/namespaces/shaper"` namespace
+declaration. A depth of e.g. `0.125` with unit `in` adds
+`shaper:cutDepth="0.125 in"` alongside it.
+
+**Why tool diameter matters:** Outside/Inside/Pocket cuts are all
+*offset* cuts - Origin has to know the bit diameter to compute how far to
+offset the toolpath from the drawn line, so a real Origin export always
+carries `shaper:toolDia` (and `shaper:cutOffset`, the *additional* offset
+beyond the bit radius - `0` unless you want extra clearance) right
+alongside `shaper:cutType` for those three types. On Line and Guide need
+no offset, so no tool diameter is required for them and the field stays
+hidden. **Real-hardware bug found and fixed:** an earlier version of this
+feature set `cutType`/`cutDepth` only. Cut depth worked, but cut type was
+silently ignored by the Origin (files always showed as "On Line") - two
+bugs, both fixed: (1) the missing `toolDia`/`cutOffset` pair Origin
+apparently requires to accept an offset cut type at all, and (2) the
+`xmlns:shaper` namespace declaration was being written with a plain
+`setAttribute` instead of a namespace-aware `setAttributeNS`, which caused
+it to be redundantly re-declared on every single shape instead of once on
+the root `<svg>` like a real Origin export does. Both are fixed now, but
+line up a real test cut (especially Outside/Inside/Pocket with a tool
+diameter set) before trusting it fully - it hasn't been hardware-verified
+since the fix.
+
+**Confirmed vs. inferred:** `outside` and `inside` are the exact strings
+seen in a real Origin export, so those two are hardware-confirmed.
+`pocket`, `online` (On Line), and `guide` are inferred from Shaper's own
+naming elsewhere (support docs, image filenames) but haven't been checked
+against a real import yet - worth uploading one quick test file with each
+before relying on them for a real cut. If Origin doesn't recognize one,
+it's very likely just a string mismatch (e.g. `on-line` or `on_line`
+instead of `online`) - easy to fix in `web_server.cpp`'s `cutType`
+`<select>` once you know the right value.
+
+Leave the cut type dropdown on "unchanged" and the depth/tool diameter
+fields blank to upload a file exactly as-is (the pre-existing behavior) -
+useful if a file already has its own per-shape cut types you don't want
+overwritten, e.g. one you exported from Origin itself. Whichever values
+you do pick apply uniformly to every shape in that upload; there's no
+per-shape control from this UI (Origin's own touchscreen still does that,
+same as always).
+
+## Folders
+
+Confirmed on real hardware: the Origin renders subfolders on the drive as
+their own groups in its import list, so RouterDrive lets you organize
+uploads into them - one project per folder, say. Folders are a single
+level deep (no folders within folders) and are just plain directories on
+the same FAT filesystem everything else lives on. Root is labeled
+**"HOME"** throughout the UI (both Folder dropdowns, and the move panel's
+destination list).
+
+To upload into a folder, pick it from the **Folder** dropdown in the
+Upload section (defaults to "Folder: HOME"). To create a new one, choose
+"+ New folder..." - you'll be prompted for a name (letters, numbers,
+spaces, `-` and `_`, up to 24 characters) and it's added to the dropdown
+immediately; the folder itself is only actually created on the device
+once you upload the first file into it, same as it always worked for the
+root folder. Invalid names (anything with `/`, `..`, or characters
+outside that set) are rejected client-side, and re-checked server-side
+too - never trust the client alone with something that touches the
+filesystem.
+
+The Files section above the upload controls has its own **Folder**
+dropdown for browsing - pick HOME or any existing folder to switch the
+list (search, paging, and multi-select delete/move all stay scoped to
+whichever folder you're viewing), or "+ New folder..." to create an
+empty one on the spot immediately (unlike the Upload section's version of
+this option, which waits for the first upload into it) - picking it
+submits a real form POST to the device and the page lands on the new
+folder once the device redirects back, the same reliable submit-and-
+redirect flow every other button on this page already uses, rather than
+a background request that could leave the dropdown looking stale until
+you refresh by hand. Browsing and uploading are independent - you can
+browse "projectA" while uploading into "projectB", or vice versa; each
+upload batch targets exactly the folder picked in the Upload section's
+own dropdown, regardless of what the Files section happens to be
+showing.
+
+Any macOS system folders that show up if a Mac has ever mounted the
+drive directly (`.Trashes`, `.fseventsd`, and the like) are filtered out
+of every folder list and dropdown - they're not something you created
+and not worth cluttering the UI with.
+
+To move files between folders: check any number of rows in the Files
+table (the same checkboxes used for delete), then click **"Move"**. That
+reveals a panel beneath the table with a destination dropdown (HOME plus
+every other folder) and a **"Confirm"** button - pick where the
+files should go and confirm there, or click "Cancel" to back out without
+moving anything. This is a real rename on the filesystem, not a copy, so
+it's instant regardless of file size. A file that already exists under
+that name in the destination is left alone and reported as failed,
+rather than silently overwritten.
+
+While you're inside a folder (not HOME), **"Delete this folder"**
+appears as a plain text link on the same line as "Delete"/"Move", at the
+right edge of that row - it removes every file in that folder and the
+folder itself, after the same confirmation described above. This can't
+be undone.
+
 ## The file list
 
-Each file's row shows a checkbox, its name, size, and upload date. Check
-any number of files and click "Delete selected" beneath the table to
-remove them all in one go - the checkbox in the header selects/deselects
-every row currently shown. You'll get one confirmation naming the file (or
-the count, if you selected more than one) before anything is deleted, same
-`confirm()`-dialog pattern as the overwrite warnings above. Selection only
+Each file's row shows a checkbox, its name, size, upload date, cut type,
+and bit size. Check any number of files - this also turns on the
+**"Delete"** and **"Move"** buttons beneath the table (both start greyed
+out/inactive, since neither does anything with nothing selected); click
+"Delete" to remove the checked files, or "Move" to reveal a panel for
+picking a destination folder and moving them there instead (see
+"Folders" above) - the checkbox in the header selects/deselects every
+row currently shown.
+You'll get one confirmation before anything is deleted or moved, same
+`confirm()`-dialog pattern as the overwrite warnings above (naming the
+file, or the count, if you selected more than one). Selection only
 applies to what's currently visible (this page/this search) - it doesn't
 reach across a search filter or onto other pages.
 
-The **"Uploaded" date** needs the device to have synced time over the
-internet (it does this automatically once it joins your Wi-Fi - see
-`config.h`'s `NTP_SERVER`/`GMT_OFFSET_SEC`/`DAYLIGHT_OFFSET_SEC` if you
-want local time instead of UTC). If your network has no internet access,
-or a file was uploaded before the very first sync completed, its date
-just shows as "-" instead of guessing.
+The **"Uploaded" date** (shown as month/day/year, no time) needs the
+device to have synced time over the internet (it does this automatically
+once it joins your Wi-Fi - see `config.h`'s
+`NTP_SERVER`/`GMT_OFFSET_SEC`/`DAYLIGHT_OFFSET_SEC` if you want local
+time instead of UTC). If your network has no internet access, or a file
+was uploaded before the very first sync completed, its date just shows
+as "-" instead of guessing.
+
+The **Cut type** and **Bit size** columns read straight off each file's
+own `shaper:cutType`/`shaper:toolDia` attributes (see "Cut type & cut
+depth" above) - RouterDrive doesn't keep a separate database of what you
+uploaded, it just peeks at the first shape in the file itself, since the
+upload feature always applies one chosen type to the whole file anyway.
+A file that was uploaded with cut type left "unchanged" (or that never
+went through this UI's cut-type feature at all - e.g. a hand-edited SVG)
+shows "-" in both columns rather than guessing.
 
 Once there are more than 10 files (`FILES_PER_PAGE` in `config.h`), a
 search box and Prev/Next pager appear above the table so the list stays
@@ -420,6 +560,40 @@ usable instead of growing into one long scroll.
 - The captive-portal redirect is a basic "send everything to /" approach;
   some phones/OSes are pickier about what makes them auto-pop the sign-in
   page. Manually browsing to the AP's IP always works as a fallback.
+- The cut-type dropdown's `pocket`/`online`/`guide` values are inferred,
+  not hardware-confirmed like `outside`/`inside` are - see "Cut type &
+  cut depth" above. Worth a real test upload before trusting them.
+- The cut-type/tool-diameter fix (adding `shaper:toolDia`/`cutOffset` and
+  fixing the `xmlns:shaper` namespace declaration - see "Cut type & cut
+  depth" above) hasn't been re-verified on real hardware yet since it was
+  made in response to a real bug report. Test an Outside/Inside/Pocket
+  cut with a tool diameter set before relying on it.
+- Folders (see "Folders" above), including creating/deleting them and
+  moving files between them, are new and not yet hardware-tested -
+  confirm the Origin actually shows subfolder contents the way you expect
+  before relying on them for a real job. Folders are one level deep only
+  (no nesting), and deleting one deletes its contents too - there's no
+  "empty this folder first" requirement, so double-check the confirmation
+  dialog before clicking through.
+- The Files section's "+ New folder..." now does a real form POST/redirect
+  (instead of the earlier background-request version, which could leave
+  the new folder invisible until a manual refresh) and the Move UI now
+  reveals its destination picker as its own panel below the file list
+  rather than an always-visible dropdown - both are Playwright-verified
+  against the real extracted page script but not yet exercised against
+  the device itself.
+- The file list's **Cut type**/**Bit size** columns read each file's
+  `shaper:cutType`/`shaper:toolDia` attributes straight off a bounded
+  scan of the file's own content (up to 4KB from the front of the file -
+  see `readShaperInfo()` in `web_server.cpp`), done once per file while
+  the folder listing is already built. Verified with a standalone C++
+  test of the extraction logic against realistic and edge-case SVG
+  content (no shaper attributes at all, On Line/Guide with no toolDia,
+  multiple shapes), but not yet run against a real uploaded file on the
+  device - if a file's first shape has an unusually long `d` attribute
+  (a very complex tessellated curve) ahead of its `shaper:*` attributes,
+  the 4KB scan could miss them and show "-" instead of the real values;
+  worth watching for on a folder with genuinely complex geometry.
 - Very rarely, restarting RouterDrive while it's plugged into the Origin
   has shown the drive briefly enumerate (Origin shows "No files found",
   meaning it did mount it) and then drop out again (back to "No USB drive

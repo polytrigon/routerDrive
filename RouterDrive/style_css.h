@@ -70,23 +70,51 @@ input {
 
 /* One consistent look for every button on the page, regardless of
    whether it's a form's type='submit' or a plain type='button' handled
-   by JS - browsers style those two differently on their own otherwise. */
+   by JS - browsers style those two differently on their own otherwise.
+   Pill-shaped (border-radius well past half the button's own height
+   always reads as fully rounded, regardless of exact padding/font
+   size) with bold white text on a solid indigo-blue, matching the
+   reference "Add to cart" style the user asked to match. */
 button {
-  padding: .5em 1em;
+  padding: .85em 1.75em;
   cursor: pointer;
-  background: #2563eb;
+  background: #1437c9;
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 10px;
   font-size: 1em;
+  font-weight: 600;
 }
 
 button:hover {
-  background: #1d4ed8;
+  background: #112fab;
 }
 
 button:active {
-  background: #1e40af;
+  background: #0e268d;
+}
+
+/* Delete/Move on the file list start disabled until a row is checked
+   (see updateBatchButtons() in the page script) - greyed out and inert
+   rather than fully hidden, so their spot in the layout stays put. */
+button:disabled,
+button:disabled:hover,
+button:disabled:active {
+  background: #ccc;
+  color: #888;
+  cursor: not-allowed;
+}
+
+/* Delete/Move on the file list, and the Confirm/Cancel pair in the move
+   panel, are smaller than other buttons - they sit in a tight row (or
+   directly below one) and don't need to be as prominent as the page's
+   primary actions (Upload, Convert & upload). */
+#deleteBtn,
+#moveBtn,
+#confirmMoveBtn,
+#cancelMoveBtn {
+  padding: .4em .9em;
+  font-size: .85em;
 }
 
 /* Larger, more touch-friendly sizing for the Upload section's file picker
@@ -103,19 +131,43 @@ input[type='file'] {
   background: #fff;
 }
 
+/* "No file chosen" text specifically (not <select>s, which share the rule
+   above) - lighter grey than the page's default body text so it reads as
+   secondary/placeholder-like next to the button. The button below sets
+   its own color explicitly, so this doesn't affect it. */
+input[type='file'] {
+  color: #888;
+}
+
+/* Gap before "No file chosen": a solid white border-right on the button
+   (matching the input's own #fff background above), NOT margin-right and
+   NOT a transparent+background-clip border - both were tried first and
+   both failed on the user's real device/browser even though they worked
+   correctly in this sandbox's Chromium: margin-right produced no visible
+   gap at all, and a transparent border with background-clip:padding-box
+   (meant to reserve space without painting over it) instead painted the
+   "invisible" border area solid blue - background-clip isn't reliably
+   honored on this native ::file-selector-button pseudo-element in every
+   browser. Painting the border-right solid #fff instead of leaving it
+   transparent sidesteps that: it doesn't need clipping to look invisible,
+   it just blends into the input's own white background directly, so it
+   works regardless of whether the browser supports clipping this
+   pseudo-element's background. The button's own visible size/shape/
+   centered "Choose Files" text (governed by padding, not border) is
+   unaffected - only the white gap after it grows. */
 input[type='file']::file-selector-button {
   font-size: 1em;
   padding: .5em 1em;
-  margin-right: .8em;
   border: none;
+  border-right: .5em solid #fff;
   border-radius: 4px;
-  background: #2563eb;
+  background: #1437c9;
   color: #fff;
   cursor: pointer;
 }
 
 input[type='file']::file-selector-button:hover {
-  background: #1d4ed8;
+  background: #112fab;
 }
 
 /* Explicit full-width treatment for the page's two or three primary
@@ -178,12 +230,35 @@ input[type='file']::file-selector-button:hover {
   cursor: pointer;
   font-size: inherit;
   font-family: inherit;
+  font-weight: normal; /* the base button rule is bold now (pill CTA
+    style) - .link-btn is meant to read as a plain text link, not a
+    button, so it opts back out */
 }
 
 .link-btn:hover,
 .link-btn:active {
   background: none;
   color: #666;
+}
+
+/* Cut depth's value input and its unit dropdown share one row instead of
+   stacking - the unit picker only needs a small slice of the width, not
+   a full line to itself like the page's other controls. */
+.depth-row {
+  display: flex;
+  gap: .5em;
+}
+
+.depth-row input {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+
+.depth-row select {
+  flex: 0 0 30%;
+  width: 30%;
+  box-sizing: border-box;
 }
 
 footer {
@@ -203,5 +278,16 @@ footer p {
 
 footer p:first-child {
   margin-top: 0;
+}
+
+/* Wraps the file list's bottom button row: Delete/Move on the left,
+   "Delete this folder" on the right, all on one line (wraps on narrow
+   screens instead of overlapping). */
+.file-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5em;
 }
 )STYLECSS";
