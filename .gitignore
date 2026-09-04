@@ -6,3 +6,14 @@ build/
 
 # Arduino IDE / editor cruft
 .vscode/
+
+# Local test/comparison files: the real DXF plus the Shaper Studio and
+# RouterDrive SVG exports used to work out how Origin actually reads cut
+# types. Worth keeping on disk to re-check against, but they're
+# diagnostic material rather than part of the project. (If they're ever
+# wanted as a permanent regression fixture, drop this line and add them
+# explicitly - until then `git add .` can't sweep them in by accident.)
+testFiles/
+
+# Deliverables handed over by the Claude desktop app
+Claude outputs/
