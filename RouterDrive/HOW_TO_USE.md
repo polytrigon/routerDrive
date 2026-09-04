@@ -162,11 +162,12 @@ A file can only have one anchor, so picking a position replaces whatever
 was there. If the file already had one you drew yourself, you'll be asked
 before it's replaced, since that throws away where you put it.
 
-**This part is new and hasn't been tested on a real Origin yet.** If the
-Origin says "unable to place design", the anchor is the thing to suspect -
-set the dropdown back to Default, re-upload, and let me know. If it
-places but the design comes out rotated or mirrored from where you
-expected, that's worth reporting too, and is the more likely of the two.
+**This part is new and hasn't been tested on a real Origin yet.** The
+thing to watch for is a design that loads fine but comes out rotated or
+mirrored from where you expected - if that happens, set the dropdown back
+to Default, re-upload, and say so. (If the Origin refuses the file
+outright with "unable to place design", that's the anchor too, but it's
+the less likely of the two.)
 
 ## Files you set up in another app
 

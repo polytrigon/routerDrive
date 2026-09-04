@@ -525,17 +525,22 @@ adjustable angles. The Origin's own nine anchor points still work
 alongside it; a custom anchor doesn't replace them, and the machine has a
 USE CUSTOM ANCHOR button to switch back.
 
-Two things in `buildAnchorPath()` are **assumptions, not documented
-facts**, and are the first things to check if the Origin doesn't like a
-generated file:
+**Size doesn't matter** - *"that right angle and it being red is key,
+nothing else to it"*, from Beau, who uses these on a real Origin. The
+legs are therefore sized purely for our own benefit: 5% of the drawing's
+smaller dimension for X, double for Y, so the triangle stays visible and
+proportionate in the editor preview at any scale. The 2:1 ratio is not
+about size - it's what keeps "shorter leg" unambiguous, since equal legs
+would leave nothing to say which one is X.
 
-1. **Size.** Shaper never states one. The legs are sized from the
-   drawing - 5% of its smaller dimension for X, double for Y - so the 2:1
-   ratio keeps "shorter leg" unambiguous at any scale.
-2. **Direction.** Shaper says the shorter leg is X and the longer is Y,
-   but never which way either points. The legs are drawn *inward* from
-   the chosen corner. If the Origin reads the design rotated or mirrored,
-   this is the line to change.
+**One assumption remains: direction.** Shaper says the shorter leg is X
+and the longer is Y, but never which way either points, and Beau's note
+doesn't reach that far. The legs are drawn *inward* from the chosen
+corner. If a design places but comes out rotated or mirrored, that's the
+line to change - `buildAnchorPath()`'s `sx`/`sy`. It may well not matter
+at all: the docs say the anchor's axes align to the Grid, or to the
+Origin's screen when there is no Grid, which would mean the triangle
+supplies the point and the workspace supplies the orientation.
 
 What is *not* assumed is the fill: `#FF0000`, confirmed working by a user
 who got one recognized, in a thread that also turned up something the
@@ -543,15 +548,14 @@ docs omit - Shaper's colour match is **case-sensitive**, so `red` and
 `#FF0000` work while `Red` and `RED` do not, contrary to the SVG spec.
 Don't "tidy" that into a named colour.
 
-The failure mode helps here: a malformed anchor makes the Origin refuse
-the file outright ("unable to place design") rather than placing it
-wrongly. So assumption 1 fails loudly. Assumption 2 is the dangerous one -
-a well-formed but rotated anchor would be accepted and simply be wrong.
+The failure mode helps: a malformed anchor makes the Origin refuse the
+file outright ("unable to place design") rather than placing it wrongly.
+Direction is the one that could be silently wrong instead.
 
-One Shaper Studio export with **Add Origin Anchor** enabled would settle
-all of this by diff rather than inference, the same way the cut-type
-encoding was settled after three failed guesses. That hasn't been done
-yet; until it is, treat the two points above as untested.
+A Shaper Studio export with **Add Origin Anchor** enabled would settle it
+by diff rather than inference, the same way the cut-type encoding was
+settled after three failed guesses. Not done yet; until it is, treat
+direction as untested.
 
 **Anchors are protected on both write paths.** Placing a cut type - by
 blanket upload or per-line edit - skips any red-filled shape. Without

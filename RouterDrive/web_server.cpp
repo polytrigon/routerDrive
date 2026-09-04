@@ -1468,21 +1468,29 @@ static String renderPage() {
           // ---- Shaper custom anchors ------------------------------------
           // A custom anchor is a red right-angled triangle: the right-angle
           // vertex is the design's reference point, the shorter leg is the
-          // X axis and the longer leg the Y axis. Shaper's docs state that
-          // much and no more, so two things below are ASSUMPTIONS, marked
-          // as such because they are what a hardware test needs to check:
+          // X axis and the longer leg the Y axis.
           //
-          //   ASSUMPTION 1 (size): the docs never give one. The legs are
-          //   sized from the drawing - 5% of its smaller dimension for X,
-          //   double that for Y - so the 2:1 ratio makes "shorter" and
-          //   "longer" unambiguous at any scale, and the triangle stays
-          //   proportionate on a coaster or a table top.
+          // SIZE does not matter - "that right angle and it being red is
+          // key, nothing else to it", from Beau, who uses these on a real
+          // Origin. So the legs are sized purely for our own benefit: 5% of
+          // the drawing's smaller dimension for X, double for Y, which
+          // keeps the triangle proportionate and visible in the editor's
+          // preview whether the design is a coaster or a table top.
           //
-          //   ASSUMPTION 2 (direction): the docs say which leg is which
-          //   axis, never which way either points. The legs are drawn
-          //   INWARD from the chosen corner, so the triangle always sits
-          //   inside the design's bounds. If the Origin reads the axes
-          //   rotated or mirrored, this is the line to change.
+          // The 2:1 ratio is NOT about size. It is about keeping "shorter
+          // leg" unambiguous: equal legs would leave nothing to say which
+          // one is X.
+          //
+          //   ASSUMPTION (direction): the docs say which leg is which axis,
+          //   never which way either points, and Beau's note doesn't reach
+          //   that far. The legs are drawn INWARD from the chosen corner,
+          //   so the triangle always sits inside the design's bounds. If a
+          //   design places but comes out rotated or mirrored, this is the
+          //   line to change. It may well not matter at all - the docs say
+          //   the anchor's axes align to the Grid, or to the Origin's
+          //   screen when there is no Grid, which would mean the triangle
+          //   supplies the point and the workspace supplies the
+          //   orientation.
           //
           // What is NOT assumed: the fill. "#FF0000" is confirmed working
           // by a user who got one recognized, and the same thread found
@@ -1491,9 +1499,9 @@ static String renderPage() {
           // "tidy" this into a named color.
           //
           // A malformed anchor makes the Origin refuse the file outright
-          // ("unable to place design"), so a wrong guess here is loud
-          // rather than silent - except for direction, where a well-formed
-          // but rotated anchor would be accepted and simply be wrong.
+          // ("unable to place design"), so a wrong guess is loud rather
+          // than silent - except for direction, where a well-formed but
+          // rotated anchor would be accepted and simply be wrong.
           "var ANCHOR_FILL = '#FF0000';"
           // Tags every red-filled shape so the rest of the code can leave
           // anchors alone. Needs the element rendered - see
