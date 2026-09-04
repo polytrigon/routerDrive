@@ -59,6 +59,14 @@ should be cut the same way. For a design that needs more than one cut
 type (a box cut out of a pocketed base, say), upload it first and use
 the per-line editor instead - next section.
 
+**Don't be alarmed if the file looks solid black.** Origin identifies
+cut types by color: Outside cuts are drawn as solid black shapes,
+Pocket as solid gray, Inside as white with a black outline, and On Line
+as a gray outline. So a file with cut types set will look like filled-in
+silhouettes if you open it in Preview, Illustrator, or similar - that's
+correct, and it's exactly how Shaper's own exports look. RouterDrive's
+own editor ignores that and shows you readable thin outlines instead.
+
 ## Giving individual lines their own cut type
 
 Say you've got a box-within-a-box design: the outer line should be cut

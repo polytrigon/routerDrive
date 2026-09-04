@@ -408,45 +408,65 @@ The **Tool diameter** dropdown lists common router bit sizes (1/8", 1/4",
 "Custom..." to reveal a free-entry field with its own mm/in unit dropdown
 for anything not listed.
 
-This works by writing Origin's own `shaper:` SVG attributes (the
-`shaper:` XML namespace Origin itself uses - confirmed by inspecting a
-real Origin-exported SVG). Concretely, for a chosen cut type of `outside`
-with a 0.25in tool and no depth set, every `<path>`/`<rect>`/etc. in the
-file gets `shaper:cutType="outside"`, `shaper:toolDia="0.25 in"`, and
-`shaper:cutOffset="0in"` added, and the root `<svg>` gets a single
-`xmlns:shaper="http://www.shapertools.com/namespaces/shaper"` namespace
-declaration. A depth of e.g. `0.125` with unit `in` adds
-`shaper:cutDepth="0.125 in"` alongside it.
+### How cut types are actually encoded
 
-**Why tool diameter matters:** Outside/Inside/Pocket cuts are all
-*offset* cuts - Origin has to know the bit diameter to compute how far to
-offset the toolpath from the drawn line, so a real Origin export always
-carries `shaper:toolDia` (and `shaper:cutOffset`, the *additional* offset
-beyond the bit radius - `0` unless you want extra clearance) right
-alongside `shaper:cutType` for those three types. On Line and Guide need
-no offset, so no tool diameter is required for them and the field stays
-hidden. **Real-hardware bug found and fixed:** an earlier version of this
-feature set `cutType`/`cutDepth` only. Cut depth worked, but cut type was
-silently ignored by the Origin (files always showed as "On Line") - two
-bugs, both fixed: (1) the missing `toolDia`/`cutOffset` pair Origin
-apparently requires to accept an offset cut type at all, and (2) the
-`xmlns:shaper` namespace declaration was being written with a plain
-`setAttribute` instead of a namespace-aware `setAttributeNS`, which caused
-it to be redundantly re-declared on every single shape instead of once on
-the root `<svg>` like a real Origin export does. Both are fixed now, but
-line up a real test cut (especially Outside/Inside/Pocket with a tool
-diameter set) before trusting it fully - it hasn't been hardware-verified
-since the fix.
+This is the single most important thing to understand about this
+feature, and it cost a long real-hardware bug hunt to pin down:
 
-**Confirmed vs. inferred:** `outside` and `inside` are the exact strings
-seen in a real Origin export, so those two are hardware-confirmed.
-`pocket`, `online` (On Line), and `guide` are inferred from Shaper's own
-naming elsewhere (support docs, image filenames) but haven't been checked
-against a real import yet - worth uploading one quick test file with each
-before relying on them for a real cut. If Origin doesn't recognize one,
-it's very likely just a string mismatch (e.g. `on-line` or `on_line`
-instead of `online`) - easy to fix in `web_server.cpp`'s `cutType`
-`<select>` once you know the right value.
+> **Origin reads a shape's cut type from its fill and stroke COLOR, not
+> from the `shaper:cutType` attribute.**
+
+Shaper's own documentation calls this "cut type encoding" and describes
+Origin as accepting "color-coded vector shapes indicating cut types";
+their Inkscape guide states outright that a gray *stroke* is an On Line
+cut and a gray *fill* is a Pocket cut. The full table, confirmed against
+a real Shaper Studio export of a real part (see `testFiles/`):
+
+| Cut type | fill | stroke |
+|---|---|---|
+| Outside (exterior) | `#000000` | none |
+| Inside (interior) | `#FFFFFF` | `#000000` |
+| Pocket | `#7F7F7F` | none |
+| On Line | none | `#7F7F7F` |
+| Guide | none | `#0068FF` |
+
+Origin matches these tolerantly rather than by exact hex - Shaper's own
+gray guide just says "make your R, G and B values equal" - but the
+values above are what Shaper's own tools emit, so that's what this app
+writes.
+
+**The `shaper:` attributes are metadata, not the mechanism.** Both
+writers still add them (`shaper:cutType`, `shaper:toolDia`,
+`shaper:cutOffset`, and `shaper:cutDepth` when a depth is set, plus a
+single `xmlns:shaper="http://www.shapertools.com/namespaces/shaper"`
+declaration on the root `<svg>`) because Shaper Studio's own exports
+carry them, `shaper:cutDepth` *is* documented as a real depth override,
+and this app's own file list and per-line editor read `shaper:cutType`
+back to show you what's set. But on their own they do nothing on the
+machine - a file with perfect `shaper:` attributes and an unrecognized
+stroke color imports with no cut type at all.
+
+**A side effect worth knowing:** because Outside/Inside/Pocket are
+encoded as *fills*, a file with those cut types set renders as solid
+black/white/gray shapes in Preview, Illustrator, or any other SVG
+viewer, rather than as thin outlines. That looks alarming the first time
+but is exactly right - it's what a Shaper Studio export looks like too.
+RouterDrive's own per-line editor deliberately ignores those colors for
+its on-screen preview and draws thin outlines in its own palette (see
+the legend under the viewer), so the drawing stays readable while you
+work on it.
+
+**Why tool diameter matters:** Outside/Inside/Pocket are all *offset*
+cuts - Origin has to know the bit diameter to compute how far to offset
+the toolpath from the drawn line, so a real export always carries
+`shaper:toolDia` (and `shaper:cutOffset`, the *additional* offset beyond
+the bit radius - `0` unless you want extra clearance) for those three
+types. On Line and Guide need no offset, so no tool diameter is required
+and the field stays hidden. Note the value format: Shaper writes these
+with **no space** between number and unit (`0.125in`, `6.35mm`) - the
+documented `shaper:cutDepth` examples do the same - so this app does
+too. An earlier version wrote `0.125 in` with a space, which is one of
+several things that had to be corrected before this worked at all.
 
 Leave the cut type dropdown on "unset" and the depth/tool diameter
 fields blank to upload a file exactly as-is (the pre-existing behavior) -
