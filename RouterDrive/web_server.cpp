@@ -1420,7 +1420,27 @@ static void handleUploadData() {
     if (folder.length() > 0 && !FFat.exists(folderDirPath(folder))) {
       FFat.mkdir(folderDirPath(folder));
     }
-    uploadFile = FFat.open(joinFolder(folder, base), FILE_WRITE);
+    String path = joinFolder(folder, base);
+    // Overwriting an existing file (re-uploading the same name - which is
+    // exactly what saving in the per-line cut editor does every time, and
+    // what re-uploading a same-named DXF/SVG from the Upload section does
+    // too) must start from a genuinely empty file. FFat.open(path,
+    // FILE_WRITE) was relied on to truncate any existing file at that
+    // path, but real-hardware testing of the cut editor showed saved
+    // files coming out corrupted - missing their opening <svg> tag,
+    // missing the xmlns:shaper declaration, containing stray null bytes,
+    // and containing what looked like leftover content from a PREVIOUS
+    // save of the same file mixed in with the new one (mismatched
+    // shaper:cutType values for the same path between two halves of one
+    // saved file) - i.e., new writes were landing on top of old bytes
+    // rather than starting clean, consistent with the open-for-write not
+    // truncating on this filesystem. Removing the old file outright
+    // before opening for write sidesteps that regardless of the exact
+    // underlying cause, guaranteeing every save starts from zero bytes.
+    if (FFat.exists(path)) {
+      FFat.remove(path);
+    }
+    uploadFile = FFat.open(path, FILE_WRITE);
     if (!uploadFile) {
       uploadBatch.failed.push_back(base);
     }
