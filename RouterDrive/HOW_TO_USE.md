@@ -48,6 +48,16 @@ plugged in. If the file list ever looks out of date on the Origin's own
 screen after that, a physical unplug/replug of the USB cable is the
 fallback that always works.
 
+**This applies to a computer too, not just the Origin.** If you have
+RouterDrive plugged into a Mac or PC and upload a file over Wi-Fi, the
+computer will usually keep showing the file list it read when the drive
+first mounted - your new file simply won't be there, and the drive can
+look completely empty if it was empty when you plugged it in. Nothing
+has gone wrong: the file is on the device (the web UI's own file list
+proves it), the computer just hasn't re-read the drive. Restart
+RouterDrive, or eject and replug, and it appears. Worth knowing before
+you go looking for a problem that isn't there.
+
 ## Cut type, depth, and tool diameter
 
 Above the upload button:
