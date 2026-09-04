@@ -448,7 +448,7 @@ it's very likely just a string mismatch (e.g. `on-line` or `on_line`
 instead of `online`) - easy to fix in `web_server.cpp`'s `cutType`
 `<select>` once you know the right value.
 
-Leave the cut type dropdown on "unchanged" and the depth/tool diameter
+Leave the cut type dropdown on "unset" and the depth/tool diameter
 fields blank to upload a file exactly as-is (the pre-existing behavior) -
 useful if a file already has its own per-shape cut types you don't want
 overwritten, e.g. one you exported from Origin itself. Whichever values
@@ -466,7 +466,7 @@ box-within-a-box design, where the outer line should be cut all the way
 through (Inside) and the inner one should be a shallower Pocket. The
 Upload section's cut type dropdown (above) can only apply one type to an
 entire file, so for this, upload the file first (leave cut type
-"unchanged," or set whatever the majority of lines should be - either
+"unset," or set whatever the majority of lines should be - either
 way, you can change any of it after), then click that file's **Cut
 type** cell in the file list.
 
@@ -489,7 +489,7 @@ Nothing is written to the device until you click **Save changes** -
 closing the editor (the **Close**/**Cancel** buttons) without saving
 asks you to confirm first if you've applied anything. Once a file has
 more than one cut type on it (either from this editor, or because it was
-uploaded with cut type "unchanged" and already had mixed types baked in
+uploaded with cut type "unset" and already had mixed types baked in
 from wherever it came from), its **Cut type** column shows **Mixed**
 instead of a single type - see "The file list" below.
 
@@ -583,7 +583,7 @@ the file agrees on one cut type, that's what shows; if they don't (either
 because you gave individual lines different types with the per-line
 editor - see "Editing individual lines' cut type" above - or because the
 file already had more than one cut type baked in when it arrived, e.g.
-uploaded with cut type left "unchanged"), the column shows **Mixed**
+uploaded with cut type left "unset"), the column shows **Mixed**
 instead of guessing which one to display. A file that never went through
 either the upload cut-type feature or the per-line editor - e.g. a
 hand-edited SVG with no `shaper:` attributes at all - shows "-" in both

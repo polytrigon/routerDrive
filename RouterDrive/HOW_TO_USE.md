@@ -31,7 +31,7 @@ file list, then the upload form.
    folder to upload into (see "Folders" below).
 3. Optionally set a **Cut type**, **Tool diameter**, and **Cut depth** -
    see "Cut type, depth, and tool diameter" below. Leave Cut type on
-   "unchanged" to skip this and upload the file exactly as converted.
+   "unset" to skip this and upload the file exactly as converted.
 4. Click **Convert & upload**.
 5. If a file with that name already exists in the target folder, you'll
    get a warning before it's overwritten.
@@ -46,7 +46,7 @@ fallback that always works.
 
 Above the upload button:
 
-- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "unchanged."
+- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "unset."
   Whichever you pick applies to *every* line in that upload.
 - **Tool diameter**: only shown for Outside/Inside/Pocket (the cut types
   that need to know your bit size to offset the toolpath correctly).
@@ -66,7 +66,7 @@ all the way through (Inside), and the inner one should only be a shallow
 Pocket. The upload controls above can't do that - they set one cut type
 for the whole file. For this, use the file list instead:
 
-1. Upload the file first (cut type "unchanged" is fine, or pick whatever
+1. Upload the file first (cut type "unset" is fine, or pick whatever
    most of the lines should be - you can change any of it next).
 2. In the file list, click that file's **Cut type** cell (whatever it
    currently shows - "-", a type, or "Mixed").

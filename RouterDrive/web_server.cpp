@@ -202,21 +202,41 @@ struct FileEntry {
 // carry different values per shape: either edited per-line through the
 // file list's cut editor, or uploaded straight from a real Origin export
 // (which already varies cutType per path) with the upload form's own
-// cutType left "unchanged" so nothing overwrote it. So this scans for
-// every occurrence of the attribute within the same bounded window,
-// rather than stopping at the first, and reports "mixed" the moment a
-// second, differing value shows up. Not a full XML parser: this app
-// controls the exact attribute syntax it writes, so a bounded plain-text
-// scan for '<name>="value"' is enough - avoids pulling in an XML library
-// just to look up two strings. Kept deliberately small (not "read the
-// whole file") since this runs once per file while building the folder
-// listing, on a board with limited SRAM already under pressure from
-// Wi-Fi/WebServer buffers - a large heap allocation here, repeated per
-// file, is a worse tradeoff than occasionally missing (or under-
-// reporting "mixed" for) a file whose relevant attributes sit further in
-// than this window reaches; those files just show "-" in Cut type/Bit
-// size, same as a file that never went through the cut-type feature.
-static const size_t SHAPER_SCAN_LIMIT = 4096;
+// cutType left "unset" so nothing overwrote it. So this scans for
+// every occurrence of the attribute, rather than stopping at the first,
+// and reports "mixed" the moment a second, differing value shows up. Not
+// a full XML parser: this app controls the exact attribute syntax it
+// writes, so a plain-text scan for '<name>="value"' is enough - avoids
+// pulling in an XML library just to look up two strings.
+//
+// This used to peek at only the first SHAPER_SCAN_LIMIT bytes of the
+// file rather than reading the whole thing, to keep folder-listing
+// memory use bounded on a board with limited SRAM already under pressure
+// from Wi-Fi/WebServer buffers. That was fine back when
+// applyShaperMetadata() stamped every shape with the same value right at
+// upload time (so the attribute always showed up almost immediately).
+// It quietly broke once per-line editing shipped: a real-hardware test
+// edited two shapes deep into a multi-KB file and the file list showed
+// "-"/"-" for both cut type AND bit size, even though the shapes'
+// attributes were saved correctly and the editor itself displayed them
+// fine on reopen (it reads the whole file via GET /svg, no size cap) -
+// their attributes simply landed past the old 4KB window. Fixed below by
+// streaming the file through a small fixed-size chunk buffer instead of
+// a size-proportional one, so correctness no longer depends on file size
+// while peak memory use is still bounded and, in fact, smaller than the
+// old worst case (one ~2KB buffer instead of up to 4KB).
+static const size_t SHAPER_SCAN_CHUNK = 2048;
+// Every '<attr>="<value>"' this app ever writes is well under this many
+// bytes (the longest, shaper:cutOffset="0.125 in", is ~27) - carrying
+// this many bytes from the end of one chunk into the front of the next
+// guarantees no occurrence is ever split across a chunk boundary, so
+// each chunk can still be scanned independently with scanAttrMixed().
+static const size_t SHAPER_SCAN_OVERLAP = 64;
+// Sane ceiling on total bytes scanned per file, purely so one huge file
+// can't make the whole folder listing crawl - well beyond any realistic
+// converted SVG for this device's use case (a Shaper Studio export of a
+// real multi-shape design was ~19 KB).
+static const size_t SHAPER_SCAN_HARD_CAP = 262144;
 
 // Scans hay for every occurrence of attrName="..." and reports whether
 // two or more of them hold differing non-blank values. firstValue is set
@@ -247,13 +267,31 @@ static bool scanAttrMixed(const String &hay, const String &attrName, String &fir
   return false;
 }
 
-// Reads up to SHAPER_SCAN_LIMIT bytes from the front of an already-open
-// file handle (left at its current read position - call this before any
-// other read on the same handle, and before the handle is closed) and
-// pulls out shaper:cutType/shaper:toolDia if present. A plain SVG never
-// run through the cut-type feature (or uploaded with cut type left
-// "unchanged" AND never edited per-line) leaves both blank - the file
-// list shows "-" for those. cutType comes back as the sentinel raw value
+// Runs one already-read chunk of text through scanAttrMixed() for a
+// single attribute name and merges the result into state (firstValue/
+// mixed) that the caller carries across chunks - so "mixed" reflects the
+// whole file scanned so far, not just this one chunk.
+static void scanChunkForAttr(const String &chunk, const String &attrName, String &firstValue, bool &mixed) {
+  if (mixed) return; // already known mixed, nothing left to learn
+  String chunkFirst;
+  bool chunkMixed = scanAttrMixed(chunk, attrName, chunkFirst);
+  if (chunkFirst.length() == 0) return; // attribute not present in this chunk
+  if (firstValue.length() == 0) {
+    firstValue = chunkFirst;
+  } else if (chunkFirst != firstValue) {
+    mixed = true;
+    return;
+  }
+  if (chunkMixed) mixed = true;
+}
+
+// Streams an already-open file handle (left at its current read position
+// - call this before any other read on the same handle, and before the
+// handle is closed) through a small fixed-size buffer, pulling out
+// shaper:cutType/shaper:toolDia if present anywhere in it. A plain SVG
+// never run through the cut-type feature (or uploaded with cut type left
+// "unset" AND never edited per-line) leaves both blank - the file list
+// shows "-" for those. cutType comes back as the sentinel raw value
 // "mixed" (see cutTypeLabel()) when more than one distinct shaper:cutType
 // value is present; toolDia comes back as the literal display string
 // "Mixed" directly, since (unlike cutType) it's shown as-is with no
@@ -261,16 +299,23 @@ static bool scanAttrMixed(const String &hay, const String &attrName, String &fir
 static void readShaperInfo(File &f, String &cutType, String &toolDia) {
   cutType = "";
   toolDia = "";
-  size_t toRead = f.size();
-  if (toRead > SHAPER_SCAN_LIMIT) toRead = SHAPER_SCAN_LIMIT;
-  if (toRead == 0) return;
-  char *buf = new char[toRead + 1];
-  size_t n = f.read((uint8_t *)buf, toRead);
-  buf[n] = '\0';
-  String content(buf);
+  if (f.size() == 0) return;
+  bool cutTypeMixed = false, toolDiaMixed = false;
+  char *buf = new char[SHAPER_SCAN_CHUNK + 1];
+  String overlapTail = "";
+  size_t totalRead = 0;
+  while (totalRead < SHAPER_SCAN_HARD_CAP) {
+    size_t n = f.read((uint8_t *)buf, SHAPER_SCAN_CHUNK);
+    if (n == 0) break; // end of file
+    buf[n] = '\0';
+    totalRead += n;
+    String chunk = overlapTail + String(buf);
+    scanChunkForAttr(chunk, "shaper:cutType", cutType, cutTypeMixed);
+    scanChunkForAttr(chunk, "shaper:toolDia", toolDia, toolDiaMixed);
+    if (cutTypeMixed && toolDiaMixed) break; // both already confirmed mixed
+    overlapTail = (chunk.length() > SHAPER_SCAN_OVERLAP) ? chunk.substring(chunk.length() - SHAPER_SCAN_OVERLAP) : chunk;
+  }
   delete[] buf;
-  bool cutTypeMixed = scanAttrMixed(content, "shaper:cutType", cutType);
-  bool toolDiaMixed = scanAttrMixed(content, "shaper:toolDia", toolDia);
   if (cutTypeMixed) cutType = "mixed";
   if (toolDiaMixed) toolDia = "Mixed";
 }
@@ -758,7 +803,7 @@ static String renderPage() {
   html += "</select>";
   html += "<br><br>";
   html += "<select id='cutType' class='full-width' onchange='toggleToolDiaRow()'>"
-          "<option value='' selected>Cut type: unchanged</option>"
+          "<option value='' selected>Cut type: unset</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
           "<option value='pocket'>Cut type: Pocket</option>"
@@ -821,7 +866,18 @@ static String renderPage() {
           "<p class='sub'>Click a line to select it. Shift-click to select more than one. Everything "
           "you select shares whatever you set below.</p>"
           "<div class='cut-editor-body'>"
+          "<div class='cut-editor-viewer'>"
           "<div id='cutEditorSvgWrap' class='cut-editor-svg-wrap'><p class='sub'>Loading...</p></div>"
+          "<div class='cut-legend'>"
+          "<div><span class='swatch' style='background:#1437c9'></span>Outside</div>"
+          "<div><span class='swatch' style='background:#0a8a3f'></span>Inside</div>"
+          "<div><span class='swatch' style='background:#8a2be2'></span>Pocket</div>"
+          "<div><span class='swatch' style='background:#888'></span>On Line</div>"
+          "<div><span class='swatch' style='background:#c9950a'></span>Guide</div>"
+          "<div><span class='swatch' style='background:#000'></span>Not set yet</div>"
+          "<div><span class='swatch' style='background:#00b8ff'></span>Selected</div>"
+          "</div>" // .cut-legend
+          "</div>" // .cut-editor-viewer
           "<div class='cut-editor-panel'>"
           "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
           "<select id='editCutType' class='full-width' onchange='toggleEditToolDiaWrap()'>"
@@ -861,15 +917,6 @@ static String renderPage() {
           "</div>"
           "<br>"
           "<button type='button' id='applyToSelectedBtn' disabled onclick='applyToSelectedShapes()'>Apply to selected</button>"
-          "<div class='cut-legend'>"
-          "<div><span class='swatch' style='background:#1437c9'></span>Outside</div>"
-          "<div><span class='swatch' style='background:#0a8a3f'></span>Inside</div>"
-          "<div><span class='swatch' style='background:#8a2be2'></span>Pocket</div>"
-          "<div><span class='swatch' style='background:#888'></span>On Line</div>"
-          "<div><span class='swatch' style='background:#c9950a'></span>Guide</div>"
-          "<div><span class='swatch' style='background:#000'></span>Not set yet</div>"
-          "<div><span class='swatch' style='background:#00b8ff'></span>Selected</div>"
-          "</div>"
           "</div>" // .cut-editor-panel
           "</div>" // .cut-editor-body
           "<p id='cutEditorStatus' class='sub'></p>"
@@ -1143,6 +1190,39 @@ static String renderPage() {
           "var depthParts = depth.split(' ');"
           "document.getElementById('editDepth').value = depthParts[0] || '';"
           "if (depthParts[1]) document.getElementById('editDepthUnit').value = depthParts[1];"
+          // Pre-fill the tool diameter preset (or the custom row) from
+          // this shape's existing shaper:toolDia, the same way depth
+          // just did above - this was missing entirely before, so
+          // reopening an already-edited shape always showed "choose
+          // one" for bit size even though the real value was saved and
+          // correct. Matched numerically (parseFloat), not by string,
+          // since a written value like "0.125 in" needs to match a
+          // preset option written as value='0.125|in'.
+          "var toolDia = el.getAttributeNS(EDITOR_SHAPER_NS, 'toolDia') || '';"
+          "var toolDiaParts = toolDia.split(' ');"
+          "var toolDiaNum = toolDiaParts[0] !== undefined ? parseFloat(toolDiaParts[0]) : NaN;"
+          "var toolDiaUnitVal = toolDiaParts[1] || '';"
+          "var presetSel = document.getElementById('editToolDiaPreset');"
+          "var matchedPreset = '';"
+          "if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
+          "for (var pi = 0; pi < presetSel.options.length; pi++) {"
+          "var optVal = presetSel.options[pi].value;"
+          "if (optVal === '' || optVal === '__custom__') continue;"
+          "var optParts = optVal.split('|');"
+          "if (parseFloat(optParts[0]) === toolDiaNum && optParts[1] === toolDiaUnitVal) { matchedPreset = optVal; break; }"
+          "}"
+          "}"
+          "if (matchedPreset) {"
+          "presetSel.value = matchedPreset;"
+          "} else if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
+          "presetSel.value = '__custom__';"
+          "document.getElementById('editToolDiaCustom').value = toolDiaParts[0];"
+          "document.getElementById('editToolDiaUnit').value = toolDiaUnitVal;"
+          "} else {"
+          "presetSel.value = '';"
+          "document.getElementById('editToolDiaCustom').value = '';"
+          "}"
+          "handleEditToolDiaPresetChange();"
           "toggleEditToolDiaWrap();"
           "}"
           "}"
@@ -1803,15 +1883,16 @@ static void handleStyleCss() {
 
 // Serves a stored file's full raw SVG content so the file list's per-line
 // cut editor (see the Cut type column in renderFilesSection()) can fetch
-// and render it client-side. Unlike readShaperInfo()'s deliberately
-// bounded SHAPER_SCAN_LIMIT peek (which runs once per file while building
-// an entire folder listing - many files at once), this reads a file's
-// whole content - acceptable here because it only ever runs for one file
-// at a time, on demand, when a user explicitly opens that file's editor,
-// not once per row in a listing. A pathologically large SVG could still
-// fail the single heap allocation below on this board's limited SRAM;
-// worth watching for on hardware with very complex/dense geometry (same
-// caveat class as the 4KB scan cap above).
+// and render it client-side. Unlike readShaperInfo()'s chunked stream
+// (which runs once per file while building an entire folder listing -
+// many files at once, so it's deliberately bounded to a small buffer),
+// this reads a file's whole content into one allocation - acceptable
+// here because it only ever runs for one file at a time, on demand, when
+// a user explicitly opens that file's editor, not once per row in a
+// listing. A pathologically large SVG could still fail the single heap
+// allocation below on this board's limited SRAM; worth watching for on
+// hardware with very complex/dense geometry (same caveat class as
+// readShaperInfo()'s SHAPER_SCAN_HARD_CAP above).
 static void handleGetSvg() {
   String name = server.hasArg("name") ? basenameOf(server.arg("name")) : "";
   String folder = server.hasArg("dir") ? server.arg("dir") : "";

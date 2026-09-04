@@ -341,13 +341,23 @@ footer p:first-child {
   margin-top: .5em;
 }
 
+/* Groups the rendered SVG with its color-key legend as one column (the
+   "render window"), stacked vertically so the legend sits as a bar along
+   the bottom of the viewer rather than in the side panel - kept as its
+   own flex column, alongside .cut-editor-panel, inside .cut-editor-body. */
+.cut-editor-viewer {
+  flex: 3 1 300px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: .5em;
+}
+
 /* The rendered SVG itself (injected by openCutEditor()) sizes to this
    pane via width:100%/height:auto set directly on the <svg> element - see
    the page script - so it scales down to fit regardless of the source
    drawing's own dimensions. */
 .cut-editor-svg-wrap {
-  flex: 3 1 300px;
-  min-width: 260px;
   border: 1px solid #ddd;
   border-radius: 6px;
   background: #fafafa;
@@ -362,8 +372,12 @@ footer p:first-child {
   box-sizing: border-box;
 }
 
+/* A horizontal bar along the bottom of the render window rather than a
+   stacked list - entries spread out (justified) across the full width. */
 .cut-legend {
-  margin-top: 1em;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
   font-size: .85em;
   color: #555;
 }
@@ -372,7 +386,7 @@ footer p:first-child {
   display: flex;
   align-items: center;
   gap: .4em;
-  margin: .25em 0;
+  margin: .2em .6em .2em 0;
 }
 
 .cut-legend .swatch {
