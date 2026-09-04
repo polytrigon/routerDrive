@@ -688,23 +688,33 @@ as "-" instead of guessing.
 
 The **Cut type** column reads straight off each file's own content (see
 "Cut type & cut depth" above) - RouterDrive doesn't keep a separate
-database of what you uploaded, it peeks at the file itself instead. It
-prefers `shaper:cutType` when the file has it and falls back to the
-fill/stroke colors otherwise, so a file that was color-coded in Affinity,
-Illustrator or Inkscape still reports its cut types here. If every shape in
-the file agrees on one cut type, that's what shows; if they don't (either
-because you gave individual lines different types with the per-line
-editor - see "Editing individual lines' cut type" above - or because the
-file already had more than one cut type baked in when it arrived, e.g.
-uploaded with cut type left "Default"), the column shows **Mixed**
-instead of guessing which one to display.
+database of what you uploaded, it peeks at the file itself instead. If
+every shape in the file agrees on one cut type, that's what shows; if
+they don't (either because you gave individual lines different types with
+the per-line editor - see "Editing individual lines' cut type" above - or
+because the file already had more than one cut type baked in when it
+arrived, e.g. uploaded with cut type left "Default"), the column shows
+**Mixed** instead of guessing which one to display.
 
-Files that carry no `shaper:` attributes at all get a second pass: the
-same fill/stroke colors Origin itself reads (see "How cut types are
-actually encoded" above) are scanned for directly, so a file coloured
-correctly in Affinity, Illustrator or Inkscape reports its real cut types
-rather than looking empty. That scan is deliberately tolerant about
-spelling - `#000`, `#000000`, `rgb(0,0,0)` and CSS `style="fill:..."`
+A file can state a cut type two ways - a `shaper:cutType` attribute, or
+the fill/stroke colors Origin itself reads - and **both are collected
+into one set, neither outranks the other.** That matters more than it
+sounds. An earlier version let the attribute win outright and only looked
+at colors for files carrying no attributes at all, which broke the most
+ordinary editing workflow there is: convert a DXF (every path gray, so On
+Line), then set one shape to Outside in the per-line editor. The edited
+shape is the only one with an attribute, so the scan saw a single value,
+called the whole file **Outside**, and discarded the colors - hiding the
+several On Line paths sitting right beside it. It should have said Mixed.
+Reported from real use; `test_color_detect.cpp` reproduces it and pins
+the fix, along with the two cases the union could plausibly have broken
+(one type stated both ways must stay that type, not become Mixed).
+
+Because the two are unioned, an unrecognized value on either side simply
+contributes nothing rather than overriding anything.
+
+The color half is deliberately tolerant about spelling - `#000`,
+`#000000`, `rgb(0,0,0)` and CSS `style="fill:..."`
 all count, and any equal-RGB gray is a gray, matching Shaper's own
 guidance. It is also deliberately not per-element (associating a fill
 with its own shape would mean parsing whole `<path>` tags, `d` attribute

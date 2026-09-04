@@ -256,60 +256,13 @@ static const size_t SHAPER_SCAN_CHUNK = 2048;
 // bytes (the longest, shaper:cutDepth="0.125 in", is ~26) - carrying
 // this many bytes from the end of one chunk into the front of the next
 // guarantees no occurrence is ever split across a chunk boundary, so
-// each chunk can still be scanned independently with scanAttrMixed().
+// each chunk can still be scanned independently.
 static const size_t SHAPER_SCAN_OVERLAP = 64;
 // Sane ceiling on total bytes scanned per file, purely so one huge file
 // can't make the whole folder listing crawl - well beyond any realistic
 // converted SVG for this device's use case (a Shaper Studio export of a
 // real multi-shape design was ~19 KB).
 static const size_t SHAPER_SCAN_HARD_CAP = 262144;
-
-// Scans hay for every occurrence of attrName="..." and reports whether
-// two or more of them hold differing non-blank values. firstValue is set
-// to whichever value is found first regardless of the mixed result, so
-// callers get a usable single value in the common (non-mixed) case for
-// free. Returns as soon as one differing value is found rather than
-// counting every occurrence - the caller only needs to know "mixed or
-// not", not how many distinct values there are.
-static bool scanAttrMixed(const String &hay, const String &attrName, String &firstValue) {
-  firstValue = "";
-  String needle = attrName + "=\"";
-  int searchFrom = 0;
-  while (true) {
-    int idx = hay.indexOf(needle, searchFrom);
-    if (idx < 0) break;
-    int start = idx + needle.length();
-    int end = hay.indexOf('"', start);
-    if (end < 0) break;
-    String val = hay.substring(start, end);
-    searchFrom = end + 1;
-    if (val.length() == 0) continue;
-    if (firstValue.length() == 0) {
-      firstValue = val;
-    } else if (val != firstValue) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Runs one already-read chunk of text through scanAttrMixed() for a
-// single attribute name and merges the result into state (firstValue/
-// mixed) that the caller carries across chunks - so "mixed" reflects the
-// whole file scanned so far, not just this one chunk.
-static void scanChunkForAttr(const String &chunk, const String &attrName, String &firstValue, bool &mixed) {
-  if (mixed) return; // already known mixed, nothing left to learn
-  String chunkFirst;
-  bool chunkMixed = scanAttrMixed(chunk, attrName, chunkFirst);
-  if (chunkFirst.length() == 0) return; // attribute not present in this chunk
-  if (firstValue.length() == 0) {
-    firstValue = chunkFirst;
-  } else if (chunkFirst != firstValue) {
-    mixed = true;
-    return;
-  }
-  if (chunkMixed) mixed = true;
-}
 
 // ---------------------------------------------------------------------------
 // Cut type detection from COLOR, for files this app didn't write.
@@ -464,21 +417,61 @@ static int countBits(uint8_t v) {
   return n;
 }
 
+// Maps a shaper:cutType value onto the same bit the color scanner uses,
+// so the file's two ways of stating a cut type land in one shared set
+// instead of one overriding the other. An unrecognized value contributes
+// nothing, exactly like an unrecognized color.
+static uint8_t cutTypeBitOf(const String &raw) {
+  if (raw == "outside") return CUTCOLOR_OUTSIDE;
+  if (raw == "inside") return CUTCOLOR_INSIDE;
+  if (raw == "pocket") return CUTCOLOR_POCKET;
+  if (raw == "online") return CUTCOLOR_ONLINE;
+  if (raw == "guide") return CUTCOLOR_GUIDE;
+  return 0;
+}
+
+// Collects every shaper:cutType in one chunk into that shared set.
+// Chunks overlap by SHAPER_SCAN_OVERLAP bytes, so an occurrence sitting
+// near a boundary can be counted twice - harmless here, since OR-ing a
+// bit that is already set changes nothing. That is a real simplification
+// over what this replaced, which tracked "first value seen" plus a mixed
+// flag across chunks and had to be careful about exactly that overlap.
+static void scanChunkForCutTypeAttr(const String &chunk, uint8_t &bits) {
+  String needle = "shaper:cutType=\"";
+  int searchFrom = 0;
+  while (true) {
+    int idx = chunk.indexOf(needle, searchFrom);
+    if (idx < 0) break;
+    int start = idx + needle.length();
+    int end = chunk.indexOf('"', start);
+    if (end < 0) break;
+    bits |= cutTypeBitOf(chunk.substring(start, end));
+    searchFrom = end + 1;
+  }
+}
+
 // Streams an already-open file handle (left at its current read position
 // - call this before any other read on the same handle, and before the
-// handle is closed) through a small fixed-size buffer, pulling out
-// shaper:cutType if present anywhere in it, and otherwise
-// falling back to reading the cut types straight out of the file's colors
-// (see the color scanner above). Only a file with neither - no shaper:*
-// attributes AND no color Origin recognizes - comes back
-// blank, which the file list shows as "Unset". cutType comes back as the
-// sentinel raw value "mixed" (see cutTypeLabel()) when more than one
-// distinct cut type is present.
+// handle is closed) through a small fixed-size buffer, collecting every
+// cut type the file states - both by shaper:cutType attribute and by the
+// fill/stroke colors Origin itself reads - into one set. cutType comes
+// back as the sentinel raw value "mixed" (see cutTypeLabel()) when that
+// set holds more than one, and blank (shown as "Unset") when the file
+// states none: no shaper:* attributes AND no color Origin recognizes.
+//
+// The two sources are unioned rather than ranked, and that is load
+// bearing. An earlier version let shaper:cutType win outright and only
+// consulted colors for files carrying no attributes at all, which broke
+// the most ordinary editing workflow there is: convert a DXF (every path
+// gray, so On Line), then set one shape to Outside in the per-line
+// editor. The edited shape is the only one with an attribute, so the
+// attribute scan saw a single value, called the file Outside, and threw
+// the colors away - hiding the several On Line paths sitting right next
+// to it. Reported from real use, reproduced in test_color_detect.cpp.
 static void readShaperInfo(File &f, String &cutType) {
   cutType = "";
   if (f.size() == 0) return;
-  bool cutTypeMixed = false;
-  uint8_t colorHits = 0;
+  uint8_t typeBits = 0;
   char *buf = new char[SHAPER_SCAN_CHUNK + 1];
   String overlapTail = "";
   size_t totalRead = 0;
@@ -488,47 +481,39 @@ static void readShaperInfo(File &f, String &cutType) {
     buf[n] = '\0';
     totalRead += n;
     String chunk = overlapTail + String(buf);
-    scanChunkForAttr(chunk, "shaper:cutType", cutType, cutTypeMixed);
-    scanChunkColors(chunk, colorHits);
-    // No early break on "both mixed" any more: the color scan has to see
-    // the whole file to be able to report a color-encoded file correctly,
-    // and stopping early would make the answer depend on where in the
-    // file the attributes happened to sit.
+    scanChunkForCutTypeAttr(chunk, typeBits);
+    scanChunkColors(chunk, typeBits);
+    // No early break once "mixed" is known: both scans have to see the
+    // whole file, and stopping early would make the answer depend on
+    // where in the file a given shape happened to sit.
     overlapTail = (chunk.length() > SHAPER_SCAN_OVERLAP) ? chunk.substring(chunk.length() - SHAPER_SCAN_OVERLAP) : chunk;
   }
   delete[] buf;
-  if (cutTypeMixed) cutType = "mixed";
-
-  // shaper:cutType, where present, is an explicit statement of intent and
-  // wins outright. Only fall back to colors for a file that carries none
-  // - i.e. one this app didn't write and that didn't come from Shaper
-  // Studio either.
-  if (cutType.length() > 0) return;
 
   // A gray stroke reads as On Line - including on a file this app's own
-  // DXF converter produced with cut type left "unset". That file really
-  // is encoded as On Line, and the Origin really will cut on the line, so
-  // reporting "Unset" would be describing the uploader's intent rather
-  // than the file. This column answers "what will the machine do with
-  // this?", and an earlier version got that wrong in both directions: it
-  // also hid a third-party file whose author had deliberately set every
-  // line to On Line in Affinity or Inkscape.
+  // DXF converter produced with cut type left on "Default". That file
+  // really is encoded as On Line, and the Origin really will cut on the
+  // line, so reporting "Unset" would be describing the uploader's intent
+  // rather than the file. This column answers "what will the machine do
+  // with this?", and an earlier version got that wrong in both
+  // directions: it also hid a third-party file whose author had
+  // deliberately set every line to On Line in Affinity or Inkscape.
   //
   // "Unset" keeps its meaning: a file with no recognized encoding at all
   // - a plain black outline from a generic drawing tool, say - still has
   // nothing here for Origin to read, and still reports Unset.
-  if (colorHits == 0) return; // stays blank -> "Unset"
-  if (countBits(colorHits) > 1) {
+  if (typeBits == 0) return; // stays blank -> "Unset"
+  if (countBits(typeBits) > 1) {
     cutType = "mixed";
-  } else if (colorHits & CUTCOLOR_OUTSIDE) {
+  } else if (typeBits & CUTCOLOR_OUTSIDE) {
     cutType = "outside";
-  } else if (colorHits & CUTCOLOR_INSIDE) {
+  } else if (typeBits & CUTCOLOR_INSIDE) {
     cutType = "inside";
-  } else if (colorHits & CUTCOLOR_POCKET) {
+  } else if (typeBits & CUTCOLOR_POCKET) {
     cutType = "pocket";
-  } else if (colorHits & CUTCOLOR_ONLINE) {
+  } else if (typeBits & CUTCOLOR_ONLINE) {
     cutType = "online";
-  } else if (colorHits & CUTCOLOR_GUIDE) {
+  } else if (typeBits & CUTCOLOR_GUIDE) {
     cutType = "guide";
   }
 }
