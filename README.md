@@ -42,10 +42,6 @@ RouterDrive doesn't just move files across - it can set Shaper cut types for you
 
 A file with more than one cut type on it shows up as **Mixed** in the list. And if you'd rather set your cut types in Affinity, Illustrator or Inkscape, go right ahead - the Origin tells cut types apart by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
 
-## Quick note to the Shaper devs
-
-If anyone up in the sky is listening, it would be amazing if you could get the USB-A "nudge" working - that would be so sweet! But no matter - thanks for creating a great tool.
-
 ## How to install + set up RouterDrive
 
 You've got all the parts together and you're ready to get this thing installed - it's done in 6 pain-free steps.
