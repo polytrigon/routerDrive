@@ -9,6 +9,11 @@ person to run this particular firmware on this particular hardware
 combination. Budget an evening for the bring-up steps below before you trust
 it at the tool.
 
+**Already built and flashed?** This README covers parts, setup, and
+first bring-up. For day-to-day use once that's done - uploading files,
+folders, cut types, the per-line cut editor, restarting, resetting
+Wi-Fi - see [`HOW_TO_USE.md`](HOW_TO_USE.md) instead.
+
 ## How it works (read this before you flash anything)
 
 - **Storage** is the XIAO's onboard flash (no SD card needed), formatted as
