@@ -1045,8 +1045,15 @@ static String renderPage() {
           "if (doc.querySelector('parsererror')) throw new Error('Could not parse this file as SVG.');"
           "var svgEl = doc.documentElement;"
           "svgEl.setAttributeNS(EDITOR_XMLNS_NS, 'xmlns:shaper', EDITOR_SHAPER_NS);"
-          "svgEl.removeAttribute('width');"
-          "svgEl.removeAttribute('height');"
+          // CSS width/height (set via .style below) already take priority
+          // over the SVG's own width/height *attributes* for on-screen
+          // rendering wherever this element is embedded - removing the
+          // attributes outright was unnecessary AND wrong: svgEl is the
+          // same live node saveCutEditor() later clones and writes back
+          // to the file, so deleting these attributes here meant every
+          // saved file silently lost its real physical width/height,
+          // leaving only viewBox behind. Leave them in place; only the
+          // preview's on-screen size is overridden, not the saved data.
           "svgEl.style.width = '100%';"
           "svgEl.style.height = 'auto';"
           "svgEl.style.maxHeight = '55vh';"
@@ -1211,6 +1218,16 @@ static String renderPage() {
           "var cloneEl = cutEditorState.svgEl.cloneNode(true);"
           "var proxies = cloneEl.querySelectorAll('[data-hit-proxy]');"
           "for (var i = 0; i < proxies.length; i++) proxies[i].parentNode.removeChild(proxies[i]);"
+          // Strip every inline style this editor set for its own on-
+          // screen preview - the root's responsive width/height/display
+          // (see openCutEditor()) and every shape's selection-highlight/
+          // cut-type-legend coloring (see cutEditorRecolor()) - none of
+          // which should ever end up in the saved file. None of it is
+          // needed there: the shaper:* cut-type data lives in its own
+          // namespaced attributes, set separately and untouched by this.
+          "cloneEl.removeAttribute('style');"
+          "var styledEls = cloneEl.querySelectorAll('[style]');"
+          "for (var s = 0; s < styledEls.length; s++) styledEls[s].removeAttribute('style');"
           "var svgText = new XMLSerializer().serializeToString(cloneEl);"
           "var fd = new FormData();"
           "fd.append('file', new Blob([svgText], {type: 'image/svg+xml'}), cutEditorState.name);"
