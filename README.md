@@ -40,7 +40,7 @@ RouterDrive doesn't just move files across - it can set Shaper cut types for you
 
 ![Editing cut types line by line in the browser](assets/browserInterface_multiCut.png)
 
-Files carrying more than one cut type show up as **Mixed** in the list. And if you'd rather set cut types in Affinity, Illustrator or Inkscape, go right ahead - Origin identifies cut types by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
+A file with more than one cut type on it shows up as **Mixed** in the list. And if you'd rather set your cut types in Affinity, Illustrator or Inkscape, go right ahead - the Origin tells cut types apart by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
 
 ## Quick note to the Shaper devs
 
@@ -53,7 +53,7 @@ You've got all the parts together and you're ready to get this thing installed -
 1. Set up [Arduino IDE](https://www.arduino.cc/en/software/)
 2. Download the RouterDrive `.zip` file
 3. Connect your ESP32-S3 to your computer and flash it with RouterDrive
-4. Connect to your ESP32-S3's Wi-Fi network and enter your workshop Wi-Fi credentials
+4. Connect to your ESP32-S3's Wi-Fi network and enter your workshop Wi-Fi name and password
 5. Plug RouterDrive into your Shaper Origin's USB port
 6. Use the browser interface at `routerdrive.local` to upload files
 
@@ -103,18 +103,18 @@ That's Arduino IDE fully set up - you won't need to repeat any of this the next 
 2. Once that succeeds, click the arrow (**Upload**) button. This takes a minute or two.
 3. Open **Tools > Serial Monitor**, set the baud rate (bottom-right of that window) to **115200**. You should see RouterDrive's own log messages scroll by - mounting storage, starting its Wi-Fi setup hotspot, and so on. If you see that, the flash worked.
 
-### 4. Connect to your ESP32-S3's Wi-Fi network and enter your workshop Wi-Fi credentials
+### 4. Connect to your ESP32-S3's Wi-Fi network and enter your workshop Wi-Fi name and password
 
-1. On first boot (and any time it doesn't have saved Wi-Fi credentials), RouterDrive broadcasts its own hotspot named **RouterDrive-Setup** (password: `routerdrive`). Join it from your phone or laptop like any other Wi-Fi network.
+1. On first boot (and any time it doesn't have a saved Wi-Fi network), RouterDrive broadcasts its own hotspot named **RouterDrive-Setup** (password: `routerdrive`). Join it from your phone or laptop like any other Wi-Fi network.
 2. Your device may pop up a "sign in to network" prompt on its own - if it does, that's the page you want. If it doesn't, just open `http://192.168.4.1/` in a browser yourself.
-3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does. **Watch the yellow status LED to know whether it worked: it goes from slowly blinking (setup mode, waiting for credentials) to solid (connected, ready to use).** That's the quickest confirmation you've got, and it doesn't need you to be watching a screen - if it's still blinking after the restart, the credentials didn't take and it's gone back to broadcasting the setup hotspot for another try.
+3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does. **Watch the yellow status light to know whether it worked: it goes from slowly blinking (still in setup mode) to solid (on your network and ready to use).** That's the quickest confirmation you've got, and you don't have to be watching a screen for it - if it's still blinking after the restart, the name or password didn't take and it's gone back to broadcasting the setup hotspot so you can try again.
 4. Once it's connected, you'll find it from then on at `routerdrive.local` in any browser on that same network - no more setup hotspot needed unless you reset it or move it to a different Wi-Fi network later.
 
    *(Don't want to give it your home Wi-Fi at all? You can skip this step entirely and use RouterDrive straight off its own hotspot instead - there's a note for how on the setup page itself.)*
 
 ### 5. Plug RouterDrive into your Shaper Origin's USB port
 
-Before it ever touches the Origin, it's worth a quick check on your own computer first: plug RouterDrive into your computer's USB-C port instead, confirm your computer sees it as an ordinary flash drive, and upload/delete a test file or two from the web UI to make sure it's actually landing on the drive.
+Before it ever touches the Origin, it's worth a quick check on your own computer first: plug RouterDrive into your computer's USB-C port instead, confirm your computer sees it as an ordinary flash drive, and upload and delete a test file or two from the RouterDrive page to make sure it's actually landing on the drive.
 
 Once that all checks out:
 
@@ -139,5 +139,5 @@ That's it - you're up and running!
 Two more docs inside this repo, depending on what you're after:
 
 - [`RouterDrive/HOW_TO_USE.md`](RouterDrive/HOW_TO_USE.md) - the day-to-day guide, once RouterDrive is built and flashed. Uploading, cut types, folders, renaming and moving files, the status LED, resetting Wi-Fi.
-- [`RouterDrive/README.md`](RouterDrive/README.md) - the build in more technical depth: exact firmware behavior, a full bring-up checklist, how cut types are encoded, and known rough edges. Worth a look if something above doesn't go as expected.
+- [`RouterDrive/README.md`](RouterDrive/README.md) - the technical one, for anyone who wants to look under the hood or change something: exactly how the firmware behaves, a first-run checklist, how cut types are stored in the file, and the known rough edges. Worth a look if something above doesn't go as expected.
 

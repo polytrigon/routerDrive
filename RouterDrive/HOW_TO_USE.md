@@ -3,27 +3,27 @@
 This is the day-to-day guide: how to get files onto the Origin once
 RouterDrive is already built, flashed, and set up. If you haven't gotten
 that far yet, start with `README.md` instead - it covers parts, Arduino
-IDE setup, and first flash/bring-up. This doc assumes all of that is
-already done and the device is plugged into your Origin.
+IDE setup, and getting it running the first time. This doc assumes all
+of that is done and the device is plugged into your Origin.
 
 ## Opening RouterDrive
 
 - **Already joined your home Wi-Fi?** Open `http://routerdrive.local/`
-  from any phone/laptop on the same network. (If `.local` addresses
-  don't resolve on your network, use the IP address shown in Arduino's
-  Serial Monitor instead.)
+  from any phone/laptop on the same network. (If that address doesn't
+  work on your network, use the numeric one instead - it's printed in
+  Arduino's Serial Monitor when the device starts up.)
 - **Never set up Wi-Fi, or just reset it?** The device broadcasts its own
   hotspot, `RouterDrive-Setup`. Join it and either follow the "sign in to
   network" popup, or open `http://192.168.4.1/` yourself. From there you
-  can either enter your home Wi-Fi's credentials, or skip that entirely
+  can either enter your home Wi-Fi's name and password, or skip that
   and use RouterDrive straight off its own hotspot - see "Using it
   without joining Wi-Fi" in `README.md` if you want that route.
 
-  After entering credentials, the status LED tells you whether they took:
+  After you enter them, the status light tells you whether it worked:
   **slow blinking means it's still in setup mode, solid means it joined
   your network** and you can reach it at `routerdrive.local`. If it's
-  still blinking after the restart, the credentials didn't work and it's
-  waiting for another try on the setup hotspot.
+  still blinking after the restart, the name or password didn't take and
+  it's waiting for you to try again on the setup hotspot.
 
 Either way you land on the same page: USB/Wi-Fi status at the top, your
 file list, then the upload form.
@@ -48,15 +48,15 @@ plugged in. If the file list ever looks out of date on the Origin's own
 screen after that, a physical unplug/replug of the USB cable is the
 fallback that always works.
 
-**This applies to a computer too, not just the Origin.** If you have
-RouterDrive plugged into a Mac or PC and upload a file over Wi-Fi, the
-computer will usually keep showing the file list it read when the drive
-first mounted - your new file simply won't be there, and the drive can
-look completely empty if it was empty when you plugged it in. Nothing
-has gone wrong: the file is on the device (the web UI's own file list
-proves it), the computer just hasn't re-read the drive. Restart
-RouterDrive, or eject and replug, and it appears. Worth knowing before
-you go looking for a problem that isn't there.
+**This applies to a computer too, not just the Origin.** If RouterDrive
+is plugged into a Mac or PC and you upload a file over Wi-Fi, the
+computer usually keeps showing whatever it saw when you first plugged
+the drive in - your new file simply won't be there, and the drive can
+look completely empty if it was empty at the time. Nothing has gone
+wrong: the file really is on the device, and RouterDrive's own file list
+will show it. The computer just hasn't looked again. Restart
+RouterDrive, or eject and replug the cable, and it turns up. Worth
+knowing before you go hunting for a problem that isn't there.
 
 ## Cut type, depth, and tool diameter
 
@@ -93,7 +93,7 @@ for the whole file. For this, use the file list instead:
 1. Upload the file first (cut type "unset" is fine, or pick whatever
    most of the lines should be - you can change any of it next).
 2. In the file list, click that file's **Cut type** cell (whatever it
-   currently shows - "-", a type, or "Mixed").
+   currently shows - Unset, a cut type, or Mixed).
 3. A viewer opens showing the actual file. Click a line to select it -
    it highlights in cyan. Shift-click to select more than one line at
    once if several should share the same setting.
@@ -133,9 +133,9 @@ set. The colors it looks for are the ones Shaper's own software uses:
 | On Line | none | gray |
 | Guide | none | blue |
 
-Any reasonable gray works (Shaper's own advice is just to make the red,
-green and blue values equal), and so do the usual ways of writing a
-color - `#000`, `#000000`, `rgb(0,0,0)`, or a CSS `style` attribute.
+Any reasonable gray works - Shaper's own advice is just to keep the red,
+green and blue values equal - and RouterDrive isn't fussy about how your
+design app happens to record the color internally.
 
 ## Folders
 
@@ -149,8 +149,8 @@ list - either way it'll prompt you for a name.
   a folder) deletes the folder and everything in it - you'll get a
   confirmation first.
 - Check any files, click **Move**, then pick a destination folder (or
-  HOME for the root) and confirm - this actually relocates them, not a
-  copy.
+  HOME for the top level) and confirm - this actually relocates them,
+  it's not a copy.
 
 ## Managing the file list
 
@@ -158,18 +158,18 @@ list - either way it'll prompt you for a name.
   **Delete** (all three stay greyed out until something's checked).
   Rename and Move sit together on the left; Delete is over on the right
   on its own, deliberately not next to them.
-- **Rename** opens a dialog with one text field per file you checked.
-  You edit the name only - the file type (`.svg`) sits beside the field
-  as fixed text and can't be changed, since a file whose extension
-  changed is one the Origin stops seeing. Change the names you want and
+- **Rename** opens a window with one box per file you checked.
+  You edit the name only - the `.svg` on the end sits beside the box and
+  can't be edited, because a file that loses it is one the Origin stops
+  seeing. Change the names you want and
   leave the rest alone; anything you don't touch is skipped. Renaming
   onto a name that's already taken is refused rather than overwriting.
-- **Move** opens the same kind of dialog: it lists the files you checked
+- **Move** opens the same kind of window: it lists the files you checked
   and asks where to put them. Since it shows you exactly what's about to
   move, there's no extra "are you sure" step - and moving a file is easy
   to undo by moving it back. Delete still asks.
-- The search box filters by filename; a Prev/Next pager shows up once
-  you have enough files that they don't fit on one page.
+- The search box filters by filename; Prev/Next buttons appear once you
+  have more files than fit on one page.
 - The **Uploaded** date needs the device to have synced time over the
   internet - if it hasn't, or your network has none, you'll see "-"
   instead of a guessed date.
@@ -178,26 +178,26 @@ list - either way it'll prompt you for a name.
 
 - The top of the page shows **USB connected**/**not connected** and your
   Wi-Fi network (or "setup mode" if it hasn't joined one).
-- The footer on every page shows when the currently-running firmware was
-  built - handy for confirming a re-flash actually took.
+- The bottom of every page shows the date and time of the version
+  currently installed - handy for confirming a re-flash actually took.
 - **Restart RouterDrive** (bottom of the page) is the normal way to get
   the Origin to notice new/changed files. It takes a few seconds, drops
   Wi-Fi briefly, and the page reconnects on its own - no need to
   manually refresh.
 
-## Resetting Wi-Fi credentials
+## Making it forget your Wi-Fi
 
 Two ways to make RouterDrive forget its saved Wi-Fi and go back to
 broadcasting `RouterDrive-Setup`:
 
-- **From the web UI**: the **Forget Wi-Fi** button, under the Wi-Fi
-  section once you're connected.
+- **From the RouterDrive page**: the **Forget Wi-Fi** button, under the
+  Wi-Fi section once you're connected.
 - **Physically, on the device itself**: the XIAO board has two small
   buttons, silkscreened **B** and **R**. Hold down **B**, then - while
   still holding it - tap **R**, and keep holding **B** for about 3
   more seconds before letting go. (Tapping **R** by itself just reboots
   the device and does *not* touch your saved Wi-Fi - **B** is the one
-  that matters for actually resetting credentials.)
+  that matters for actually clearing your saved network.)
 
 ## Status LED
 
@@ -206,18 +206,18 @@ A small light on the board tells you the device's state at a glance:
 | Pattern | Meaning |
 |---|---|
 | Solid on | Connected to your Wi-Fi and idle - ready to use |
-| Slow blink | Setup/AP mode - broadcasting `RouterDrive-Setup`, waiting for Wi-Fi credentials |
+| Slow blink | Setup mode - broadcasting `RouterDrive-Setup`, waiting for your Wi-Fi details |
 | Fast blink | Busy - a file upload or delete is in progress |
 | A few quick flashes, then off | Restart was just triggered (confirms the button press registered) |
 
-It's a single fixed-color (yellow) LED, not RGB. If you'd rather it just
+It's a single yellow light - it doesn't change color. If you'd rather it
 stayed dark, there's a small "Turn status LED off" link at the very
 bottom of the page - click it again to turn it back on. The setting is
 saved and survives restarts/power cycles.
 
 ## If something's not working
 
-This guide covers the happy path. For known limitations, unresolved
-issues, and what hasn't been hardware-tested yet, see `README.md`'s
+This guide covers normal use. For known limitations and rough edges,
+see `README.md`'s
 "Known rough edges / things to improve next" section - and if it's not
 listed there either, it's worth mentioning so it can get tracked.
