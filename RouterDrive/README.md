@@ -111,6 +111,41 @@ static const char *SVG_FOLDER = "/";   // change e.g. to "/SVGs" if needed
    select **XIAO_ESP32S3** (under the esp32 boards list).
 5. **Tools > Port**, select the port that appeared when you plugged it in.
 
+### If uploading fails the first time (it probably will)
+
+The usual pattern: you hit Upload, it fails to connect, the entry under
+**Tools > Port** changes, and the *second* attempt works. That is worth
+understanding rather than working around, because it will happen every
+time.
+
+The XIAO ESP32-S3 has no USB-to-serial chip. The USB port you flash
+through is provided by whatever firmware is currently running - and once
+RouterDrive is running, that firmware is busy being a USB flash drive.
+The IDE's automatic "reboot into the bootloader" handshake goes through
+that same USB connection, so it is unreliable here. When it fails, the
+port toggling it did on the way out often drops the chip into download
+mode anyway, the ROM bootloader enumerates with a different USB identity
+(hence the changed port), and the retry talks to the ROM and succeeds.
+
+To make it work first time, put the board in download mode by hand:
+
+1. Hold the **B** (BOOT) button.
+2. Tap the **R** (RESET) button.
+3. Release **B**.
+4. Pick the port that just appeared under **Tools > Port**, then Upload.
+5. Press **R** again afterwards to run the sketch.
+
+The `routerDrive_topButtons.stl` case in `3D Prints/` exists so you can
+reach both buttons without taking the device apart.
+
+**One thing to know about holding B**, because this project gives that
+button a second job: holding BOOT through a *normal* startup for
+`BOOT_RESET_HOLD_MS` (3 seconds) wipes the saved Wi-Fi credentials - see
+"Resetting Wi-Fi" below. If your download-mode attempt doesn't take and
+the sketch boots normally while you are still holding B, you can clear
+your Wi-Fi settings without meaning to. Let go of B as soon as you have
+tapped R and nothing is at risk either way.
+
 ### Required Tools-menu settings
 
 These matter - the sketch will fail to compile or MSC won't work without
