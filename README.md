@@ -107,7 +107,7 @@ That's Arduino IDE fully set up - you won't need to repeat any of this the next 
 
 1. On first boot (and any time it doesn't have saved Wi-Fi credentials), RouterDrive broadcasts its own hotspot named **RouterDrive-Setup** (password: `routerdrive`). Join it from your phone or laptop like any other Wi-Fi network.
 2. Your device may pop up a "sign in to network" prompt on its own - if it does, that's the page you want. If it doesn't, just open `http://192.168.4.1/` in a browser yourself.
-3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does. If it connects successfully, the yellow status LED on the RouterDrive turns solid.
+3. Enter your workshop's Wi-Fi name and password and submit. RouterDrive restarts and tries to join that network - the setup hotspot disappears once it does. **Watch the yellow status LED to know whether it worked: it goes from slowly blinking (setup mode, waiting for credentials) to solid (connected, ready to use).** That's the quickest confirmation you've got, and it doesn't need you to be watching a screen - if it's still blinking after the restart, the credentials didn't take and it's gone back to broadcasting the setup hotspot for another try.
 4. Once it's connected, you'll find it from then on at `routerdrive.local` in any browser on that same network - no more setup hotspot needed unless you reset it or move it to a different Wi-Fi network later.
 
    *(Don't want to give it your home Wi-Fi at all? You can skip this step entirely and use RouterDrive straight off its own hotspot instead - there's a note for how on the setup page itself.)*

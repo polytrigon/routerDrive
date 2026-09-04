@@ -19,6 +19,12 @@ already done and the device is plugged into your Origin.
   and use RouterDrive straight off its own hotspot - see "Using it
   without joining Wi-Fi" in `README.md` if you want that route.
 
+  After entering credentials, the status LED tells you whether they took:
+  **slow blinking means it's still in setup mode, solid means it joined
+  your network** and you can reach it at `routerdrive.local`. If it's
+  still blinking after the restart, the credentials didn't work and it's
+  waiting for another try on the setup hotspot.
+
 Either way you land on the same page: USB/Wi-Fi status at the top, your
 file list, then the upload form.
 
