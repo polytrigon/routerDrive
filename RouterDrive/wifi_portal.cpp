@@ -59,7 +59,12 @@ static bool connectSTA(const String &ssid, const String &pass, bool keepAPAlive 
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < WIFI_CONNECT_TIMEOUT_MS) {
-    delay(250);
+    // ledDelay(), not delay(): on the first call this runs from setup(),
+    // where loop() hasn't started and nothing else is advancing the boot
+    // blink. This is the longest single stretch of boot - up to
+    // WIFI_CONNECT_TIMEOUT_MS - so it's the one that most needs the LED to
+    // keep showing signs of life.
+    ledDelay(250);
     Serial.print(".");
   }
   Serial.println();

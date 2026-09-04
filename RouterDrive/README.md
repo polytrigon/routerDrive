@@ -321,8 +321,26 @@ gives you a glance-able status without needing Serial Monitor open:
 |---|---|
 | Solid on | Connected to your Wi-Fi and idle - ready to use |
 | Slow blink | Setup/AP mode - broadcasting `RouterDrive-Setup`, waiting for Wi-Fi credentials |
-| Fast blink | Busy - a file upload or delete is in progress |
+| Fast blink | Busy - starting up, or a file upload or delete is in progress |
 | A few quick flashes, then off | Restart was just triggered (confirms the button press registered) |
+
+**On the fast blink at startup:** booting takes a noticeable while -
+mounting the flash, then up to `WIFI_CONNECT_TIMEOUT_MS` (15s) joining
+your network - and the LED used to stay dark for all of it, which reads
+as a failed flash right when you're least sure it worked. It now blinks
+from the moment RouterDrive's own code starts running, and settles to
+slow blink or solid once Wi-Fi resolves. There's still a second or two of
+darkness before that, while the ESP32's ROM bootloader runs and USB
+re-enumerates; nothing in this sketch is executing yet, so that part
+can't be signalled.
+
+Worth knowing if you touch this: `ledLoop()` is what advances a blink, and
+it's only reached from `loop()` - which doesn't run until `setup()`
+returns. So setting a pattern during boot isn't enough on its own; the
+long waits in `setup()` have to call `ledDelay()` rather than `delay()` or
+the LED just freezes mid-pattern, lit but motionless, which looks like a
+hang rather than progress. `test_led_boot.cpp` covers this, including a
+negative control that confirms plain `delay()` does freeze it.
 
 This is a first pass covering the states that seemed most worth signaling;
 it's all driven from `led.cpp` if you want to add more (e.g. a distinct

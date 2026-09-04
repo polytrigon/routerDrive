@@ -25,6 +25,12 @@ of that is done and the device is plugged into your Origin.
   still blinking after the restart, the name or password didn't take and
   it's waiting for you to try again on the setup hotspot.
 
+  Give it a moment first, though. Every time RouterDrive starts up it
+  blinks quickly for a few seconds while it gets going - that's just it
+  working, not a problem. Wait for the quick blinking to settle into
+  either the slow blink or the solid light before reading anything into
+  it. Joining a network can take up to fifteen seconds.
+
 Either way you land on the same page: USB/Wi-Fi status at the top, your
 file list, then the upload form.
 
