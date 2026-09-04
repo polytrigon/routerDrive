@@ -765,47 +765,64 @@ static String renderFilesSection() {
   bool hasMoveDest = viewFolder.length() > 0 || !folders.empty();
   bool showDeleteFolder = viewFolder.length() > 0;
   if (filteredCount > 0 || showDeleteFolder) {
-    // Delete/Move start disabled - updateBatchButtons() (in the page
-    // script) enables them once at least one row is checked. "Delete
-    // this folder" doesn't depend on any row being checked (it acts on
-    // the folder itself), so it's laid out separately via .file-actions
-    // (left group: Delete/Move; right group: Delete this folder) rather
-    // than sharing their disabled-until-selected state, and is rendered
-    // even when the folder is empty (filteredCount == 0) so an empty
-    // folder can still be removed from here.
-    html += "<div class='file-actions'><div>";
+    // Rename/Move/Delete all start disabled - updateBatchButtons() (in
+    // the page script) enables them once at least one row is checked.
+    // They're split across the two ends of the .file-actions row on
+    // purpose: the reversible actions (Rename, Move) group together on
+    // the left, and Delete sits alone on the right, well away from them,
+    // so the one that destroys work isn't the button next to the one you
+    // meant to press. "Delete this folder" joins it on the right for the
+    // same reason (and doesn't depend on any row being checked, since it
+    // acts on the folder itself) - it's also rendered even when the
+    // folder is empty (filteredCount == 0), so an empty folder can still
+    // be removed from here.
+    html += "<div class='file-actions'><div class='file-actions-group'>";
     if (filteredCount > 0) {
-      // Rename sits left of Delete and shares its disabled-until-selected
-      // state, but opens a dialog instead of submitting - the new names
-      // have to be typed somewhere first. See showRenamePanel().
-      html += "<button type='button' id='renameBtn' onclick='showRenamePanel()' disabled>Rename</button> ";
-      html += "<button type='submit' id='deleteBtn' formaction='/delete' onclick='return confirmBatchDelete()' disabled>Delete</button>";
+      // Rename opens a dialog instead of submitting - the new names have
+      // to be typed somewhere first. See showRenamePanel().
+      html += "<button type='button' id='renameBtn' onclick='showRenamePanel()' disabled>Rename</button>";
       if (hasMoveDest) {
-        // "Move" no longer submits directly - it just reveals #movePanel
-        // below (destination select + confirm), so the always-visible
+        // "Move" doesn't submit directly either - it just reveals
+        // #movePanel below (destination select + confirm), so the
         // "Move to:" dropdown doesn't sit in the way when nobody's
         // moving anything.
         html += " <button type='button' id='moveBtn' onclick='showMovePanel()' disabled>Move</button>";
       }
     }
-    html += "</div>";
+    html += "</div><div class='file-actions-group'>";
+    if (filteredCount > 0) {
+      html += "<button type='submit' id='deleteBtn' formaction='/delete' onclick='return confirmBatchDelete()' disabled>Delete</button>";
+    }
     if (showDeleteFolder) {
       html += "<button type='submit' formaction='/deletefolder' class='link-btn' onclick='return confirmDeleteFolder()'>Delete this folder</button>";
     }
-    html += "</div>";
+    html += "</div>";  // .file-actions-group (right)
+    html += "</div>";  // .file-actions
   }
   html += "</form>";
   if (filteredCount > 0 && hasMoveDest) {
-    // Rendered outside <form id='deleteForm'> (below it in the DOM, not
-    // nested inside), so both the destination select and the confirm
-    // button carry an explicit form='deleteForm' attribute - HTML lets a
-    // control outside a <form> still submit with/into it that way, which
-    // is what makes the checked rowchecks (and the chosen dest) travel
-    // together in the one POST, same formaction-override trick already
-    // used for Delete/Move selected above.
-    html += "<div id='movePanel' style='display:none'>";
-    html += "<p class='sub'>Move selected file(s) to:</p>";
-    html += "<select name='dest' id='moveDest' form='deleteForm'>";
+    // Same dialog shape as Rename (see #renameOverlay in renderPage()),
+    // so the two batch actions behave the same way rather than one
+    // opening a modal and the other unfolding a strip below the table.
+    // showMovePanel() fills in the list of what's about to move.
+    //
+    // Rendered outside <form id='deleteForm'>, so the destination select
+    // and the confirm button each carry an explicit form='deleteForm' -
+    // HTML lets a control outside a <form> submit with/into it that way,
+    // which is what makes the checked rowchecks and the chosen dest
+    // travel together in one POST, same formaction-override trick used
+    // for Delete above. That association is by attribute, not by DOM
+    // position, so it keeps working from inside the overlay.
+    html += "<div id='moveOverlay' class='modal-overlay' style='display:none'>"
+            "<div class='modal-box dialog-narrow'>"
+            "<div class='cut-editor-header'>"
+            "<h3>Move files</h3>"
+            "<button type='button' class='link-btn' onclick='closeMovePanel()'>Close</button>"
+            "</div>"
+            "<p class='sub'>Moving:</p>"
+            "<ul id='moveFileList' class='dialog-file-list'></ul>"
+            "<p class='sub'>Destination folder:</p>";
+    html += "<select name='dest' id='moveDest' form='deleteForm' class='full-width'>";
     if (viewFolder.length() > 0) {
       html += "<option value=''>HOME</option>";
     }
@@ -813,10 +830,12 @@ static String renderFilesSection() {
       if (folders[i] == viewFolder) continue;
       html += "<option value='" + htmlEscape(folders[i]) + "'>" + htmlEscape(folders[i]) + "</option>";
     }
-    html += "</select> ";
-    html += "<button type='submit' id='confirmMoveBtn' form='deleteForm' formaction='/move' onclick='return confirmMove()'>Confirm</button> ";
-    html += "<button type='button' id='cancelMoveBtn' onclick=\"document.getElementById('movePanel').style.display='none'\">Cancel</button>";
-    html += "</div>";
+    html += "</select>"
+            "<br><br>"
+            "<button type='submit' id='confirmMoveBtn' form='deleteForm' formaction='/move' onclick='return confirmMove()'>Move</button> "
+            "<button type='button' id='cancelMoveBtn' class='link-btn' onclick='closeMovePanel()'>Cancel</button>"
+            "</div>"
+            "</div>";
   }
 
   if (showControls && totalPages > 1) {
@@ -1079,13 +1098,13 @@ static String renderPage() {
   // to act on. lastViewedFolder is set by the renderFilesSection() call
   // above, so it already reflects the folder being shown.
   html += "<div id='renameOverlay' class='modal-overlay' style='display:none'>"
-          "<div class='modal-box rename-box'>"
+          "<div class='modal-box dialog-narrow'>"
           "<div class='cut-editor-header'>"
           "<h3>Rename files</h3>"
           "<button type='button' class='link-btn' onclick='closeRenamePanel()'>Close</button>"
           "</div>"
-          "<p class='sub'>Leave a name unchanged to skip that file. If you don't type an "
-          "extension, the original one is kept.</p>"
+          "<p class='sub'>Leave a name unchanged to skip that file. File types can't be "
+          "changed here.</p>"
           "<form id='renameForm' method='POST' action='/rename' onsubmit='return confirmRename()'>";
   if (lastViewedFolder.length() > 0) {
     html += "<input type='hidden' name='dir' value='" + htmlEscape(lastViewedFolder) + "'>";
@@ -1197,10 +1216,24 @@ static String renderPage() {
           "if (boxes.length === 1) return confirm('Delete ' + boxes[0].value + '?');"
           "return confirm('Delete ' + boxes.length + ' files?');"
           "}"
-          // Builds one labelled text field per checked row, each paired
-          // with a hidden "from" carrying that file's current name, so
-          // handleRename() can match old to new by position. Rebuilt from
-          // scratch every time it opens rather than kept in sync, since
+          // Splits "part.v2.svg" into {stem: 'part.v2', ext: '.svg'}. The
+          // dot > 0 test keeps a leading-dot name from being read as all
+          // extension and no name.
+          "function splitFileName(name) {"
+          "var dot = name.lastIndexOf('.');"
+          "if (dot > 0) return { stem: name.substring(0, dot), ext: name.substring(dot) };"
+          "return { stem: name, ext: '' };"
+          "}"
+          // Builds one labelled row per checked file: a hidden "from" with
+          // the current name (so handleRename() can match old to new by
+          // position), a text field holding ONLY the name part, and the
+          // extension shown beside it as fixed text rather than as
+          // editable characters - renaming a file is about the name, and
+          // an .svg quietly turned into .svh is a file the Origin stops
+          // seeing. The submitted "to" is its own hidden field, assembled
+          // from stem + extension in confirmRename(); the visible field
+          // has no name attribute, so it never posts on its own. Rebuilt
+          // from scratch on every open rather than kept in sync, since
           // the selection can change freely while the dialog is closed.
           "function showRenamePanel() {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
@@ -1209,57 +1242,90 @@ static String renderPage() {
           "wrap.innerHTML = '';"
           "for (var i = 0; i < boxes.length; i++) {"
           "var name = boxes[i].value;"
+          "var parts = splitFileName(name);"
           "var row = document.createElement('div');"
           "row.className = 'rename-row';"
           "var hidden = document.createElement('input');"
           "hidden.type = 'hidden'; hidden.name = 'from'; hidden.value = name;"
+          "var target = document.createElement('input');"
+          "target.type = 'hidden'; target.name = 'to'; target.value = name;"
           "var label = document.createElement('label');"
           "label.className = 'sub';"
           "label.textContent = name;"
+          "var field = document.createElement('div');"
+          "field.className = 'rename-field';"
           "var input = document.createElement('input');"
-          "input.type = 'text'; input.name = 'to'; input.value = name;"
-          "input.className = 'full-width';"
-          "input.setAttribute('maxlength', '64');"
-          "row.appendChild(hidden); row.appendChild(label); row.appendChild(input);"
+          "input.type = 'text'; input.className = 'rename-stem'; input.value = parts.stem;"
+          "input.setAttribute('maxlength', '60');"
+          "input.setAttribute('aria-label', 'New name for ' + name);"
+          "field.appendChild(input);"
+          "if (parts.ext) {"
+          "var ext = document.createElement('span');"
+          "ext.className = 'rename-ext';"
+          "ext.textContent = parts.ext;"
+          "field.appendChild(ext);"
+          "}"
+          "row.appendChild(hidden); row.appendChild(target); row.appendChild(label); row.appendChild(field);"
           "wrap.appendChild(row);"
           "}"
           "document.getElementById('renameOverlay').style.display = 'flex';"
-          "var first = wrap.querySelector('input[name=\"to\"]');"
+          "var first = wrap.querySelector('.rename-stem');"
           "if (first) { first.focus(); first.select(); }"
           "}"
           "function closeRenamePanel() {"
           "document.getElementById('renameOverlay').style.display = 'none';"
           "}"
-          // Catches the mistakes worth catching before a round trip; the
-          // device re-validates everything anyway (see handleRename()).
+          // Assembles each row's submitted name from the stem the user
+          // typed plus its untouched extension, and catches the mistakes
+          // worth catching before a round trip. The device re-validates
+          // all of it regardless (see handleRename()).
           "function confirmRename() {"
-          "var inputs = document.querySelectorAll('#renameFields input[name=\"to\"]');"
+          "var rows = document.querySelectorAll('#renameFields .rename-row');"
           "var seen = {};"
           "var changed = 0;"
-          "for (var i = 0; i < inputs.length; i++) {"
-          "var v = inputs[i].value.replace(/^\\s+|\\s+$/g, '');"
-          "if (v.length === 0) { alert('A file name cannot be blank.'); inputs[i].focus(); return false; }"
-          "if (v.indexOf('/') >= 0 || v.indexOf('\\\\') >= 0) { alert('File names cannot contain slashes.'); inputs[i].focus(); return false; }"
-          "var key = v.toLowerCase();"
-          "if (seen[key]) { alert('Two files would both be named ' + v + '.'); inputs[i].focus(); return false; }"
+          "for (var i = 0; i < rows.length; i++) {"
+          "var stemInput = rows[i].querySelector('.rename-stem');"
+          "var extEl = rows[i].querySelector('.rename-ext');"
+          "var original = rows[i].querySelector('input[name=\"from\"]');"
+          "var target = rows[i].querySelector('input[name=\"to\"]');"
+          "var stem = stemInput.value.replace(/^\\s+|\\s+$/g, '');"
+          "if (stem.length === 0) { alert('A file name cannot be blank.'); stemInput.focus(); return false; }"
+          "if (stem.indexOf('/') >= 0 || stem.indexOf('\\\\') >= 0) { alert('File names cannot contain slashes.'); stemInput.focus(); return false; }"
+          "var full = stem + (extEl ? extEl.textContent : '');"
+          "var key = full.toLowerCase();"
+          "if (seen[key]) { alert('Two files would both be named ' + full + '.'); stemInput.focus(); return false; }"
           "seen[key] = true;"
-          "var original = inputs[i].parentNode.querySelector('input[name=\"from\"]');"
-          "if (original && original.value !== v) changed++;"
+          "target.value = full;"
+          "if (original.value !== full) changed++;"
           "}"
           "if (changed === 0) { alert('No names were changed.'); return false; }"
           "return true;"
           "}"
-"function showMovePanel() {"
+          // Move opens the same kind of dialog as Rename rather than
+          // unfolding a strip below the table, so both batch actions
+          // behave alike. Listing the files being moved inside the dialog
+          // also replaces the old confirm() step: the dialog already
+          // shows exactly what is about to move and where, and moving is
+          // reversible anyway - unlike Delete, which keeps its confirm.
+          "function showMovePanel() {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
           "if (boxes.length === 0) { alert('Select at least one file to move.'); return; }"
-          "document.getElementById('movePanel').style.display = '';"
+          "var list = document.getElementById('moveFileList');"
+          "list.innerHTML = '';"
+          "for (var i = 0; i < boxes.length; i++) {"
+          "var li = document.createElement('li');"
+          "li.textContent = boxes[i].value;"
+          "list.appendChild(li);"
+          "}"
+          "document.getElementById('moveOverlay').style.display = 'flex';"
+          "}"
+          "function closeMovePanel() {"
+          "document.getElementById('moveOverlay').style.display = 'none';"
           "}"
           "function confirmMove() {"
           "var boxes = document.querySelectorAll('#deleteForm .rowcheck:checked');"
           "if (boxes.length === 0) { alert('Select at least one file to move.'); return false; }"
-          "var destSel = document.getElementById('moveDest');"
-          "var destLabel = destSel.options[destSel.selectedIndex].textContent;"
-          "return confirm('Move ' + boxes.length + ' file(s) to ' + destLabel + '?');"
+          "return true;"
           "}"
           // dirNav comes from the Files section above - navigating just
           // follows a link (GET), but "+ New folder..." needs a real POST

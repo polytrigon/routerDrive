@@ -575,29 +575,50 @@ be undone.
 
 Each file's row shows a checkbox, its name, size, upload date, cut type,
 and bit size. Check any number of files - this also turns on the
-**"Rename"**, **"Delete"** and **"Move"** buttons beneath the table (all
+**"Rename"**, **"Move"** and **"Delete"** buttons beneath the table (all
 start greyed out/inactive, since none of them does anything with nothing
-selected); click "Delete" to remove the checked files, "Move" to reveal a
-panel for picking a destination folder and moving them there instead (see
-"Folders" above), or "Rename" to open a dialog with one text field per
-checked file - the checkbox in the header selects/deselects every row
+selected). The checkbox in the header selects/deselects every row
 currently shown.
 
-**Rename** posts every field at once to `/rename` as matched
-`from`/`to` pairs, so several files can be renamed in a single round
-trip. Fields you leave alone are skipped rather than reported as
-failures, a new name with no extension keeps the original's (the Origin
-only reads `.svg`, and it's an easy thing to forget), and a rename onto
-an existing name is refused rather than overwriting it. That last check
-also covers the case `FFat.exists()` alone can't see - two files in the
-same batch renamed onto one name, where the first rename creates the
-very file the second would collide with - by tracking names claimed
-earlier in the same loop.
-You'll get one confirmation before anything is deleted or moved, same
-`confirm()`-dialog pattern as the overwrite warnings above (naming the
-file, or the count, if you selected more than one). Selection only
-applies to what's currently visible (this page/this search) - it doesn't
-reach across a search filter or onto other pages.
+Those three are split across the two ends of the `.file-actions` row on
+purpose: the reversible actions (Rename, Move) group together on the
+left, and Delete sits alone on the right, well away from them, so the
+one that destroys work isn't the button next to the one you meant to
+press. "Delete this folder" joins Delete on the right for the same
+reason.
+
+**Rename** and **Move** both open a dialog (`#renameOverlay` /
+`#moveOverlay`), sharing the same `.modal-overlay`/`.modal-box` shell as
+the cut editor via `.dialog-narrow` - one interaction shape for both
+batch actions rather than one opening a modal and the other unfolding a
+strip below the table.
+
+- **Rename** builds one row per checked file and posts them all at once
+  to `/rename` as matched `from`/`to` pairs, so several files are
+  renamed in a single round trip. The editable field holds only the
+  *name*; the extension is rendered beside it as fixed text and is
+  reassembled on submit, so a `.svg` can't quietly become a `.svh` - a
+  file the Origin then stops seeing. (The visible field carries no
+  `name` attribute; a hidden `to` per row is filled in by
+  `confirmRename()` from stem + extension. Splitting at the *last* dot
+  keeps `part.v2.svg` working.) Fields left alone are skipped rather
+  than reported as failures, and a rename onto an existing name is
+  refused rather than overwriting it - including the case
+  `FFat.exists()` alone can't see, two files in one batch renamed onto
+  the same name, where the first rename creates the very file the second
+  would collide with, handled by tracking names claimed earlier in the
+  loop.
+- **Move** lists the files it's about to move and asks for a
+  destination folder (see "Folders" above). Its `<select>` and confirm
+  button live inside the overlay but carry `form='deleteForm'`, so the
+  checked rows and the chosen destination still travel together in one
+  POST - form association is by attribute, not DOM position. Because the
+  dialog already shows exactly what is moving and where, there's no
+  extra `confirm()` step; moving is reversible. **Delete** keeps its
+  confirmation.
+
+Selection only applies to what's currently visible (this page/this
+search) - it doesn't reach across a search filter or onto other pages.
 
 The **"Uploaded" date** (shown as month/day/year, no time) needs the
 device to have synced time over the internet (it does this automatically

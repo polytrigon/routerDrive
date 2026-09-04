@@ -138,14 +138,20 @@ list - either way it'll prompt you for a name.
 
 ## Managing the file list
 
-- Check any number of files to enable **Rename**, **Delete** and **Move**
-  (all three stay greyed out until something's checked).
-- **Rename** opens a dialog with one text field per file you checked,
-  each starting out as that file's current name. Change the ones you
-  want and leave the rest alone - anything you don't touch is skipped.
-  If you don't type an extension, the original one is kept for you, so
-  `bracket` becomes `bracket.svg`. Renaming onto a name that's already
-  taken is refused rather than overwriting it.
+- Check any number of files to enable **Rename**, **Move** and
+  **Delete** (all three stay greyed out until something's checked).
+  Rename and Move sit together on the left; Delete is over on the right
+  on its own, deliberately not next to them.
+- **Rename** opens a dialog with one text field per file you checked.
+  You edit the name only - the file type (`.svg`) sits beside the field
+  as fixed text and can't be changed, since a file whose extension
+  changed is one the Origin stops seeing. Change the names you want and
+  leave the rest alone; anything you don't touch is skipped. Renaming
+  onto a name that's already taken is refused rather than overwriting.
+- **Move** opens the same kind of dialog: it lists the files you checked
+  and asks where to put them. Since it shows you exactly what's about to
+  move, there's no extra "are you sure" step - and moving a file is easy
+  to undo by moving it back. Delete still asks.
 - The search box filters by filename; a Prev/Next pager shows up once
   you have enough files that they don't fit on one page.
 - The **Uploaded** date needs the device to have synced time over the

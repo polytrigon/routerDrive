@@ -64,6 +64,23 @@ input {
   padding: .4em;
 }
 
+/* ...but not checkboxes. The rule above is meant for fields you type
+   into; a checkbox isn't one, and full width + text-field padding does
+   nothing useful to it. Left at the browser default a checkbox renders
+   around 13px, which is noticeably small next to this page's type and a
+   poor tap target on a phone - so size it in em (scaling with the text
+   around it) and give it the page's own blue rather than the browser's
+   accent color. */
+input[type='checkbox'] {
+  width: 1.3em;
+  height: 1.3em;
+  padding: 0;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: #1437c9;
+  cursor: pointer;
+}
+
 /* One consistent look for every button on the page, regardless of
    whether it's a form's type='submit' or a plain type='button' handled
    by JS - browsers style those two differently on their own otherwise.
@@ -282,9 +299,19 @@ footer p:first-child {
 /* Wraps the file list's bottom button row: Delete/Move on the left,
    "Delete this folder" on the right, all on one line (wraps on narrow
    screens instead of overlapping). */
+/* Two groups pushed to opposite ends: the reversible actions (Rename,
+   Move) on the left, and Delete - plus "Delete this folder" when there
+   is one - alone on the right, deliberately nowhere near them. */
 .file-actions {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .5em;
+}
+
+.file-actions-group {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: .5em;
@@ -395,12 +422,27 @@ footer p:first-child {
   flex: 0 0 auto;
 }
 
-/* Rename dialog (file list "Rename" -> #renameOverlay). Reuses the same
-   .modal-overlay/.modal-box shell as the cut editor; only the per-file
-   rows inside need their own rules. Narrower than the cut editor's box -
-   it's a list of short text fields, not a drawing. */
-.rename-box {
+/* The file list's batch-action dialogs - Rename (#renameOverlay) and
+   Move (#moveOverlay). Both reuse the same .modal-overlay/.modal-box
+   shell as the cut editor, just narrower: they hold a short list and a
+   couple of controls, not a drawing. */
+.dialog-narrow {
   max-width: 480px;
+}
+
+/* The "here's what you're about to act on" list - currently the files
+   being moved. Plain, tight, and scrollable rather than letting a big
+   selection push the dialog's own buttons off the screen. */
+.dialog-file-list {
+  margin: .2em 0 1em;
+  padding-left: 1.2em;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.dialog-file-list li {
+  word-break: break-all;
+  margin: .15em 0;
 }
 
 /* One row per selected file: the current name as a small caption above
@@ -414,4 +456,25 @@ footer p:first-child {
   display: block;
   margin-bottom: .2em;
   word-break: break-all;
+}
+
+/* The name field and its fixed extension sit on one line, the field
+   taking whatever width is left. The extension is deliberately plain
+   text, not part of the input: you rename the file, not its type. */
+.rename-field {
+  display: flex;
+  align-items: center;
+  gap: .35em;
+}
+
+.rename-field .rename-stem {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.rename-ext {
+  flex: 0 0 auto;
+  color: #666;
+  font-family: inherit;
 }
