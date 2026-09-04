@@ -45,8 +45,18 @@ static const uint32_t BOOT_RESET_HOLD_MS = 3000;
 // if the Origin turns out to need a specific subfolder, e.g. "/SVGs".
 static const char *SVG_FOLDER = "/";
 
-// Must match the "ffat" partition's erase-block size (4KB) so raw MSC writes
-// stay aligned to real flash sectors - see storage.cpp.
+// The block size advertised over USB. This is NOT the authority any more:
+// storage.cpp asks the wear-levelling layer for the real sector size at
+// boot (wl_sector_size(), the flash erase-sector size) and uses that, so
+// the value here is a documented expectation and a cross-check - a
+// mismatch is reported over serial rather than silently assumed away.
+//
+// Kept at the erase-sector size rather than the conventional 512 bytes on
+// purpose: NOR flash can only erase whole sectors, so a 512-byte block
+// would mean erasing 4KB to replace 512 bytes and destroying the other
+// 3.5KB. Matching the two makes that impossible by construction. The cost
+// is that 4K logical blocks are unusual for USB mass storage - legal, but
+// not every host is happy with them.
 static const uint32_t MSC_BLOCK_SIZE = 4096;
 
 // ---- Web UI -------------------------------------------------------------
