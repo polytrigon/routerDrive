@@ -31,6 +31,17 @@ Once RouterDrive is connected to your Wi-Fi network and plugged into the Shaper 
 
 [Watch it in action](assets/filesUploading.MOV) - a quick look at uploading files and seeing them land on the Origin.
 
+## Setting cut types
+
+RouterDrive doesn't just move files across - it can set Shaper cut types for you too, so a file lands on the Origin already knowing which lines are Outside cuts, which are Pockets, and so on. Two ways to do it:
+
+- **The whole file at once** - pick a cut type and bit size in the Upload section before you hit "Convert & upload," and every line in that file gets it.
+- **Line by line** - upload the file first, then click its **Cut type** cell in the file list. That opens an editor showing the actual drawing: click a line to select it (shift-click for several), pick a cut type and bit size, and hit "Apply to selected." This is the one for the classic shape-inside-a-shape case, where the outer line needs cutting all the way through and the inner one is only a shallow pocket.
+
+![Editing cut types line by line in the browser](assets/browserInterface_multiCut.png)
+
+Files carrying more than one cut type show up as **Mixed** in the list. And if you'd rather set cut types in Affinity, Illustrator or Inkscape, go right ahead - Origin identifies cut types by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
+
 ## Quick note to the Shaper devs
 
 If anyone up in the sky is listening, it would be amazing if you could get the USB-A "nudge" working - that would be so sweet! But no matter - thanks for creating a great tool.
@@ -125,5 +136,8 @@ That's it - you're up and running!
 
 ## More detail / troubleshooting
 
-The [`RouterDrive/README.md`](RouterDrive/README.md) inside this repo covers the build in more technical depth - exact firmware behavior, a full bring-up checklist, the status LED reference, resetting Wi-Fi credentials, and known rough edges. Worth a look if something above doesn't go as expected.
+Two more docs inside this repo, depending on what you're after:
+
+- [`RouterDrive/HOW_TO_USE.md`](RouterDrive/HOW_TO_USE.md) - the day-to-day guide, once RouterDrive is built and flashed. Uploading, cut types, folders, renaming and moving files, the status LED, resetting Wi-Fi.
+- [`RouterDrive/README.md`](RouterDrive/README.md) - the build in more technical depth: exact firmware behavior, a full bring-up checklist, how cut types are encoded, and known rough edges. Worth a look if something above doesn't go as expected.
 
