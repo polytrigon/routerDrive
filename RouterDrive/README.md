@@ -143,14 +143,7 @@ to coexist with an optional drag-and-drop bootloader - picking it does
 **not** require using that bootloader or change how you upload; the
 normal Upload button keeps working exactly as before.)
 
-#**On the tests referenced throughout this README.** They are harnesses
-that run off-device - a headless browser driving the real extracted page
-script, and standalone C++ that reimplements a function against the same
-inputs - so none of them are part of the sketch and none affect how the
-device behaves. They are not in this repo. Where this README says
-something was verified, that is what it means.
-
-## Sketch layout
+### Sketch layout
 
 Arduino IDE treats every `.h`/`.cpp` file that sits next to the `.ino` in
 the same folder as an extra tab - you don't need to do anything special,
