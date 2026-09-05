@@ -44,9 +44,10 @@ Wi-Fi - see [`HOW_TO_USE.md`](HOW_TO_USE.md) instead.
   have gone in behind WL's back, leaving its bookkeeping inconsistent with
   the data it describes. **The invariant to preserve: both paths address
   the flash through the same WL handle, and only one WL instance is ever
-  mounted.** `test_storage_modes.cpp` models that state machine - 200
-  access cycles, nested begins, stray ends, and injected mount failures -
-  and is the cheapest way to check a change here without hardware.
+  mounted.** That state machine was modelled off-device - 200 access
+  cycles, nested begins, stray ends, injected mount failures - which is
+  the cheapest way to check a change here without hardware, and worth
+  redoing if you touch it.
   *Credit to Beau for spotting the original.*
 - **Wi-Fi upload** and **USB exposure** can't literally touch the flash at
   the same instant - that's a hard limitation of how the flash's
@@ -142,7 +143,14 @@ to coexist with an optional drag-and-drop bootloader - picking it does
 **not** require using that bootloader or change how you upload; the
 normal Upload button keeps working exactly as before.)
 
-### Sketch layout
+#**On the tests referenced throughout this README.** They are harnesses
+that run off-device - a headless browser driving the real extracted page
+script, and standalone C++ that reimplements a function against the same
+inputs - so none of them are part of the sketch and none affect how the
+device behaves. They are not in this repo. Where this README says
+something was verified, that is what it means.
+
+## Sketch layout
 
 Arduino IDE treats every `.h`/`.cpp` file that sits next to the `.ino` in
 the same folder as an extra tab - you don't need to do anything special,
@@ -339,8 +347,9 @@ it's only reached from `loop()` - which doesn't run until `setup()`
 returns. So setting a pattern during boot isn't enough on its own; the
 long waits in `setup()` have to call `ledDelay()` rather than `delay()` or
 the LED just freezes mid-pattern, lit but motionless, which looks like a
-hang rather than progress. `test_led_boot.cpp` covers this, including a
-negative control that confirms plain `delay()` does freeze it.
+hang rather than progress. Checked off-device against a simulated clock,
+including a negative control confirming that plain `delay()` does freeze
+the pattern.
 
 This is a first pass covering the states that seemed most worth signaling;
 it's all driven from `led.cpp` if you want to add more (e.g. a distinct
@@ -513,9 +522,10 @@ in its own colour with an Anchor legend entry, and refuses selection with
 an explanation rather than silently ignoring the click. Detection is
 deliberately liberal - any red-dominant fill, not strictly a right
 triangle - because a red shape encodes no cut type whatever its geometry,
-so declining to overwrite it is right either way. `test_anchor.js` covers
-it, including that the red survives a full save round trip; disabling the
-detector fails six of its checks.
+so declining to overwrite it is right either way. Checked in a headless
+browser against the real page script, including that the red survives a
+full save round trip; stubbing the detector out fails six of those
+checks.
 
 **Placing a standard anchor.** The Upload
 section and the cut editor can both write an anchor at a standard
@@ -607,8 +617,8 @@ junk in everybody's SVG.
 blanket upload or per-line edit - skips any red-filled shape. Without
 that, uploading an Affinity file that already had an anchor while also
 choosing a cut type would recolour the anchor into a cut and destroy it;
-`test_anchor_generate.js` covers exactly that, and disabling the anchor
-marking fails it. Shaper allows one custom anchor per object, so choosing
+That case is covered off-device, and disabling the anchor marking fails
+it. Shaper allows one custom anchor per object, so choosing
 a position replaces an existing anchor rather than adding a second, and
 the editor asks first because that discards geometry the user placed
 deliberately.
@@ -829,8 +839,8 @@ Line), then set one shape to Outside in the per-line editor. The edited
 shape is the only one with an attribute, so the scan saw a single value,
 called the whole file **Outside**, and discarded the colors - hiding the
 several On Line paths sitting right beside it. It should have said Mixed.
-Reported from real use; `test_color_detect.cpp` reproduces it and pins
-the fix, along with the two cases the union could plausibly have broken
+Reported from real use, then reproduced off-device before anything was
+changed - along with the two cases the union could plausibly have broken
 (one type stated both ways must stay that type, not become Mixed).
 
 Because the two are unioned, an unrecognized value on either side simply
@@ -914,8 +924,9 @@ usable instead of growing into one long scroll.
   Shaper export, and 200 allocations and 305KB for a 100KB drawing - all
   short-lived and odd-sized, on a board with roughly 300KB of usable
   heap. It is now char*-based with one reused buffer: zero allocations,
-  and about 3x faster. `bench_scan.cpp` holds both implementations, prints
-  those numbers, and asserts the two agree on every input.
+  and about 3x faster. Those numbers come from a benchmark holding both
+  implementations side by side, which also asserts the two agree on every
+  input - that is how the rewrite was checked before it went in.
 - The file list's **Cut type** column used to read only the first 4KB of
   each file, which was a real bug: a per-line edit further into the file
   was invisible, so a genuinely mixed file reported a single type (or
@@ -924,9 +935,9 @@ usable instead of growing into one long scroll.
   anywhere in the file is found. It prefers `shaper:cutType` and falls
   back to classifying fill/stroke colors, which is what lets a file
   color-coded in another app report its cut types here. Covered by
-  standalone C++ tests (`test_stream_scan.cpp`, `test_color_detect.cpp`)
-  including attributes straddling a chunk boundary and a real Shaper
-  Studio export, and confirmed on the device against real uploaded files.
+  standalone C++ tests including attributes straddling a chunk boundary
+  and a real Shaper Studio export, and confirmed on the device against
+  real uploaded files.
 - The per-line cut editor (see "Editing individual lines' cut type"
   above) is Playwright-tested against the real extracted page script
   (opening a fetched SVG, clicking to select single and multiple lines,
