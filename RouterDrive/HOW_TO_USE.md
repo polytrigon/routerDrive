@@ -25,6 +25,12 @@ of that is done and the device is plugged into your Origin.
   still blinking after the restart, the name or password didn't take and
   it's waiting for you to try again on the setup hotspot.
 
+  Give it a moment first, though. Every time RouterDrive starts up it
+  blinks quickly for a few seconds while it gets going - that's just it
+  working, not a problem. Wait for the quick blinking to settle into
+  either the slow blink or the solid light before reading anything into
+  it. Joining a network can take up to fifteen seconds.
+
 Either way you land on the same page: USB/Wi-Fi status at the top, your
 file list, then the upload form.
 
@@ -35,9 +41,9 @@ file list, then the upload form.
    automatically, right in your browser).
 2. Optionally pick units (mm/inches - only matters for DXF files) and a
    folder to upload into (see "Folders" below).
-3. Optionally set a **Cut type**, **Tool diameter**, and **Cut depth** -
-   see "Cut type, depth, and tool diameter" below. Leave Cut type on
-   "unset" to skip this and upload the file exactly as converted.
+3. Optionally set a **Cut type** and **Cut depth** - see "Cut type and
+   depth" below. Leave Cut type on "Default" to skip this and upload the
+   file exactly as converted.
 4. Click **Convert & upload**.
 5. If a file with that name already exists in the target folder, you'll
    get a warning before it's overwritten.
@@ -58,17 +64,19 @@ will show it. The computer just hasn't looked again. Restart
 RouterDrive, or eject and replug the cable, and it turns up. Worth
 knowing before you go hunting for a problem that isn't there.
 
-## Cut type, depth, and tool diameter
+## Cut type and depth
 
 Above the upload button:
 
-- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "unset."
+- **Cut type**: Outside, Inside, Pocket, On Line, Guide, or "Default."
   Whichever you pick applies to *every* line in that upload.
-- **Tool diameter**: only shown for Outside/Inside/Pocket (the cut types
-  that need to know your bit size to offset the toolpath correctly).
-  Pick a common size from the dropdown, or "Custom..." for anything
-  else.
 - **Cut depth**: optional. Leave blank to not set one.
+
+**Bit size isn't set here, and doesn't need to be.** You tell the Origin
+which bit is in the router, and that's what it uses - nothing in the file
+changes it. RouterDrive used to offer a bit size dropdown; it turned out
+to have no effect on the machine, so it's gone rather than sitting there
+implying otherwise. Set your bit on the Origin, same as always.
 
 This is a whole-file setting - useful when every line in the design
 should be cut the same way. For a design that needs more than one cut
@@ -90,16 +98,18 @@ all the way through (Inside), and the inner one should only be a shallow
 Pocket. The upload controls above can't do that - they set one cut type
 for the whole file. For this, use the file list instead:
 
-1. Upload the file first (cut type "unset" is fine, or pick whatever
+1. Upload the file first (cut type "Default" is fine, or pick whatever
    most of the lines should be - you can change any of it next).
 2. In the file list, click that file's **Cut type** cell (whatever it
    currently shows - Unset, a cut type, or Mixed).
 3. A viewer opens showing the actual file. Click a line to select it -
    it highlights in cyan. Shift-click to select more than one line at
    once if several should share the same setting.
-4. In the side panel, pick a **Cut type** (plus **Tool diameter**/**Cut
-   depth** if that type needs them) and click **Apply to selected**. The
-   line(s) recolor to match - the small legend in the panel shows which
+4. In the side panel, pick a **Cut type** (and a **Cut depth** if you
+   want one) and click **Apply to selected**. If the line has never been
+   set, the dropdown starts on **On Line**, which is what the Origin
+   assumes for an unmarked line anyway - so it's a safe starting point,
+   not a guess about your design. The line(s) recolor to match - the small legend in the panel shows which
    color means what, so you can see at a glance what's been set and
    what's still black (not set yet).
 5. Repeat steps 3-4 for any other lines that need a different setting.
@@ -109,21 +119,73 @@ for the whole file. For this, use the file list instead:
 
 Once a file has more than one cut type on it, its **Cut type** column in
 the file list shows **Mixed** instead of a single type - that's your
-signal it's using per-line settings rather than one blanket type. A file
-with nothing set at all shows **Unset** in both the Cut type and Bit
-size columns.
+signal it's using per-line settings rather than one blanket type.
+
+**A freshly converted DXF shows "On Line," not "Unset."** That isn't the
+list guessing - a converted file really is drawn in Shaper's On Line gray,
+and the Origin really will cut on the line. The column tells you what the
+machine will do with the file, so that's what it says. **Unset** is
+reserved for a file with nothing the Origin can read at all - a plain
+outline drawing from some other program that was never colored for
+Shaper.
+
+**If your file has a custom anchor, the editor leaves it alone.** A custom
+anchor is a red triangle you draw in another program to tell the Origin
+exactly where your design should sit. It isn't something to cut, so the
+editor shows it in red, won't let you select it, and won't write a cut
+type onto it - click it and it just explains what it is. Your anchor comes
+through untouched.
+
+The panel also tells you straight away whether the file has one, so you
+don't have to go hunting for a small red triangle in a busy drawing.
+Having a custom anchor doesn't take the tool's own anchor buttons away
+either - the Origin can switch between them, and a **USE CUSTOM ANCHOR**
+button brings yours back.
+
+If you use the Origin's own anchor buttons instead (the nine corner and
+edge points on the tool), none of this applies - that choice is made on
+the machine and isn't part of the file at all.
+
+## Setting an anchor
+
+An **anchor** is the point the Origin lines your design up from. There's
+an **Anchor** dropdown in the Upload section and another in the cut
+editor, offering the four corners and the centre. RouterDrive draws
+Shaper's red anchor triangle at whichever you pick. The tool's own nine
+anchor buttons still work alongside it - you can switch between them on
+the machine.
+
+**Uploads get a Center anchor by default.** If the file already has an
+anchor you drew yourself, that one is kept and the file is passed through
+untouched - the upload form won't quietly replace your work.
+
+In the cut editor the dropdown shows what the file *currently* has, so
+"Anchor: Top right" means it already is. A file with a hand-drawn anchor
+reads **Anchor: Custom Anchor**. Moving between standard positions just
+happens; replacing a hand-drawn one asks first, since that throws away
+where you put it.
+
+This has been tested on a real Origin, with top left and bottom right
+both placing correctly. An earlier version drew the triangle at a
+different angle depending on which corner you picked, and the Origin
+responded by rotating the whole design 180 degrees for some of them. It
+now uses one angle everywhere - the one the machine placed correctly. If
+you ever see a design come out rotated from where you expected, that's
+the thing to report.
 
 ## Files you set up in another app
 
 You don't have to use RouterDrive's editor at all. Origin identifies cut
 types by color, so a file you've already colored correctly in Affinity,
 Illustrator, Inkscape or anything else works as-is - just upload it with
-Cut type left on "unset" so nothing overwrites what you did.
+Cut type left on "Default". If your file has its own anchor, it's passed
+through untouched, byte for byte, and nothing overwrites what you did.
 
 RouterDrive reads those colors too, so the file list shows the real cut
 types for those files the same way it does for its own - **Pocket**,
-**Outside**, **Mixed**, and so on - rather than pretending nothing is
-set. The colors it looks for are the ones Shaper's own software uses:
+**Outside**, **On Line**, **Mixed**, and so on - rather than pretending
+nothing is set. The colors it looks for are the ones Shaper's own
+software uses:
 
 | Cut type | fill | stroke |
 |---|---|---|

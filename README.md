@@ -35,12 +35,12 @@ Once RouterDrive is connected to your Wi-Fi network and plugged into the Shaper 
 
 RouterDrive doesn't just move files across - it can set Shaper cut types for you too, so a file lands on the Origin already knowing which lines are Outside cuts, which are Pockets, and so on. Two ways to do it:
 
-- **The whole file at once** - pick a cut type and bit size in the Upload section before you hit "Convert & upload," and every line in that file gets it.
-- **Line by line** - upload the file first, then click its **Cut type** cell in the file list. That opens an editor showing the actual drawing: click a line to select it (shift-click for several), pick a cut type and bit size, and hit "Apply to selected." This is the one for the classic shape-inside-a-shape case, where the outer line needs cutting all the way through and the inner one is only a shallow pocket.
+- **The whole file at once** - pick a cut type in the Upload section before you hit "Convert & upload," and every line in that file gets it.
+- **Line by line** - upload the file first, then click its **Cut type** cell in the file list. That opens an editor showing the actual drawing: click a line to select it (shift-click for several), pick a cut type, and hit "Apply to selected." This is the one for the classic shape-inside-a-shape case, where the outer line needs cutting all the way through and the inner one is only a shallow pocket.
 
 ![Editing cut types line by line in the browser](assets/browserInterface_multiCut.png)
 
-A file with more than one cut type on it shows up as **Mixed** in the list. And if you'd rather set your cut types in Affinity, Illustrator or Inkscape, go right ahead - the Origin tells cut types apart by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
+A file with more than one cut type on it shows up as **Mixed** in the list. Bit size isn't part of any of this - the Origin uses whichever bit you tell the machine you've loaded, so there's nothing to set here. And if you'd rather set your cut types in Affinity, Illustrator or Inkscape, go right ahead - the Origin tells cut types apart by color, and RouterDrive reads those same colors, so your file shows its real cut types in the list without you having to redo anything here.
 
 ## Quick note to the Shaper devs
 

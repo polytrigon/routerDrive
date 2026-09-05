@@ -40,6 +40,12 @@ void ledApplyIdleState();
 // Cheap and non-blocking - safe to call unconditionally every loop().
 void ledLoop();
 
+// A drop-in replacement for delay() that keeps the current blink pattern
+// advancing while it waits. Use it anywhere setup() blocks noticeably -
+// loop() (and therefore ledLoop()) isn't running yet at that point, so a
+// plain delay() would leave the LED frozen mid-pattern.
+void ledDelay(uint32_t ms);
+
 // Blocking confirmation flash (a handful of quick on/off cycles), used
 // right before a restart so the button press has a visible "yes, this is
 // happening" moment even though the actual restart takes a few seconds.

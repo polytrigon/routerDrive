@@ -44,9 +44,10 @@ Wi-Fi - see [`HOW_TO_USE.md`](HOW_TO_USE.md) instead.
   have gone in behind WL's back, leaving its bookkeeping inconsistent with
   the data it describes. **The invariant to preserve: both paths address
   the flash through the same WL handle, and only one WL instance is ever
-  mounted.** `test_storage_modes.cpp` models that state machine - 200
-  access cycles, nested begins, stray ends, and injected mount failures -
-  and is the cheapest way to check a change here without hardware.
+  mounted.** That state machine was modelled off-device - 200 access
+  cycles, nested begins, stray ends, injected mount failures - which is
+  the cheapest way to check a change here without hardware, and worth
+  redoing if you touch it.
   *Credit to Beau for spotting the original.*
 - **Wi-Fi upload** and **USB exposure** can't literally touch the flash at
   the same instant - that's a hard limitation of how the flash's
@@ -321,8 +322,27 @@ gives you a glance-able status without needing Serial Monitor open:
 |---|---|
 | Solid on | Connected to your Wi-Fi and idle - ready to use |
 | Slow blink | Setup/AP mode - broadcasting `RouterDrive-Setup`, waiting for Wi-Fi credentials |
-| Fast blink | Busy - a file upload or delete is in progress |
+| Fast blink | Busy - starting up, or a file upload or delete is in progress |
 | A few quick flashes, then off | Restart was just triggered (confirms the button press registered) |
+
+**On the fast blink at startup:** booting takes a noticeable while -
+mounting the flash, then up to `WIFI_CONNECT_TIMEOUT_MS` (15s) joining
+your network - and the LED used to stay dark for all of it, which reads
+as a failed flash right when you're least sure it worked. It now blinks
+from the moment RouterDrive's own code starts running, and settles to
+slow blink or solid once Wi-Fi resolves. There's still a second or two of
+darkness before that, while the ESP32's ROM bootloader runs and USB
+re-enumerates; nothing in this sketch is executing yet, so that part
+can't be signalled.
+
+Worth knowing if you touch this: `ledLoop()` is what advances a blink, and
+it's only reached from `loop()` - which doesn't run until `setup()`
+returns. So setting a pattern during boot isn't enough on its own; the
+long waits in `setup()` have to call `ledDelay()` rather than `delay()` or
+the LED just freezes mid-pattern, lit but motionless, which looks like a
+hang rather than progress. Checked off-device against a simulated clock,
+including a negative control confirming that plain `delay()` does freeze
+the pattern.
 
 This is a first pass covering the states that seemed most worth signaling;
 it's all driven from `led.cpp` if you want to add more (e.g. a distinct
@@ -425,17 +445,14 @@ upload request per file itself.
 
 The "Upload files" section has optional controls above the "Convert &
 upload" button: a **Cut type** dropdown (Outside / Inside / Pocket / On
-Line / Guide), a **Tool diameter** dropdown (only shown when the cut type
-needs one - see below), and a **Cut depth** field with a small unit
-dropdown (mm/in, defaults to mm). Set any of these and every shape in
-every file you're about to upload gets them stamped on, in-browser,
-before the file ever reaches the device - the ESP32 itself doesn't touch
-this, same "do it client-side in JS" approach as the DXF converter.
+Line / Guide) and a **Cut depth** field with a small unit dropdown
+(mm/in, defaults to mm). Set either of these and every shape in every
+file you're about to upload gets them stamped on, in-browser, before the
+file ever reaches the device - the ESP32 itself doesn't touch this, same
+"do it client-side in JS" approach as the DXF converter.
 
-The **Tool diameter** dropdown lists common router bit sizes (1/8", 1/4",
-3/8", 1/2" and 3mm, 6mm, 8mm, 10mm) so the common case is one click - pick
-"Custom..." to reveal a free-entry field with its own mm/in unit dropdown
-for anything not listed.
+There is deliberately no bit-size control here; see "Bit size isn't in
+the file" below.
 
 ### How cut types are actually encoded
 
@@ -465,8 +482,8 @@ values above are what Shaper's own tools emit, so that's what this app
 writes.
 
 **The `shaper:` attributes are metadata, not the mechanism.** Both
-writers still add them (`shaper:cutType`, `shaper:toolDia`,
-`shaper:cutOffset`, and `shaper:cutDepth` when a depth is set, plus a
+writers still add them (`shaper:cutType`, and `shaper:cutDepth` when a
+depth is set, plus a
 single `xmlns:shaper="http://www.shapertools.com/namespaces/shaper"`
 declaration on the root `<svg>`) because Shaper Studio's own exports
 carry them, `shaper:cutDepth` *is* documented as a real depth override,
@@ -474,6 +491,130 @@ and this app's own file list and per-line editor read `shaper:cutType`
 back to show you what's set. But on their own they do nothing on the
 machine - a file with perfect `shaper:` attributes and an unrecognized
 stroke color imports with no cut type at all.
+
+**Custom anchors are the same mechanism, and the editor has to respect
+that.** Shaper's "custom anchor" is not an attribute either: it's a
+right-angled closed triangle with a **red fill and no stroke**, whose
+right-angle vertex is the design's reference point and whose shorter and
+longer legs define the X and Y axes. (The nine standard anchor points are
+a separate feature, chosen on the machine at placement time - nothing in
+the file, same as bit size.)
+
+The reader is already immune: red never matches, since the fill
+classifier wants equal R/G/B and the stroke classifier wants blue
+dominance, so an anchor contributes no bits and can't cause a false
+Mixed. The per-line editor was not. It colours shapes by their
+`shaper:cutType`, so an anchor - which has none - drew in unset-black,
+indistinguishable from a line you hadn't set. Select it, hit Apply, and
+`applyShaperCutColors()` overwrote the red: the file still opened, it
+just quietly no longer had an anchor, and the Origin would cut the
+triangle. `cutEditorIsAnchor()` now spots a red-dominant fill (read via
+`getComputedStyle`, so a named colour, a hex and an `rgb()` all normalize
+the same way, and read *before* the preview forces `fill:none`), draws it
+in its own colour with an Anchor legend entry, and refuses selection with
+an explanation rather than silently ignoring the click. Detection is
+deliberately liberal - any red-dominant fill, not strictly a right
+triangle - because a red shape encodes no cut type whatever its geometry,
+so declining to overwrite it is right either way. Checked in a headless
+browser against the real page script, including that the red survives a
+full save round trip; stubbing the detector out fails six of those
+checks.
+
+**Placing a standard anchor.** The Upload
+section and the cut editor can both write an anchor at a standard
+position - top left/right, bottom left/right, or centre - as the red
+triangle Shaper reads. Deliberately positions only: no drag-and-drop, no
+adjustable angles. The Origin's own nine anchor points still work
+alongside it; a custom anchor doesn't replace them, and the machine has a
+USE CUSTOM ANCHOR button to switch back.
+
+**Size doesn't matter** - *"that right angle and it being red is key,
+nothing else to it"*, from Beau, who uses these on a real Origin. The
+legs are therefore sized purely for our own benefit: 5% of the drawing's
+smaller dimension for X, double for Y, so the triangle stays visible and
+proportionate in the editor preview at any scale. The 2:1 ratio is not
+about size - it's what keeps "shorter leg" unambiguous, since equal legs
+would leave nothing to say which one is X.
+
+**Direction is settled, and it mattered.** The first build drew the legs
+*inward* from whichever corner you picked, which gave a different
+orientation at every position. Two files cut on a real Origin showed the
+cost: the bottom-right anchor placed correctly, and the top-left one came
+back with the **whole design rotated 180 degrees** - exactly the rotation
+that turns top-left's orientation into bottom-right's.
+
+So the Origin reads orientation from the legs and rotates the design
+until the long (Y) leg points up. Orientation is now fixed for every
+position - short leg toward -x, long leg toward -y - and only the vertex
+moves. **Retested on the machine afterwards: top left now places
+correctly**, alongside bottom right. A consequence worth knowing: at every
+corner but bottom-right the triangle now pokes slightly outside the
+drawing's bounds. That's fine, it isn't cut, and it's the price of one
+orientation that works everywhere instead of four that each have to get
+lucky.
+
+Top right, bottom left and centre have not been put on a machine. They
+should follow by construction - orientation is what the Origin reacted
+to, it is now identical at every position, and only the vertex moves - but
+that is an inference, not a test, and inferences have a poor record on
+this project.
+
+Still open: whether the X leg matters too. Bottom-right works with X
+pointing left, so the Origin evidently tolerates that, but a bottom-left
+style frame (X right, Y up) would be the textbook one and might be better
+again. Not worth changing without a test, since the current directions
+are the ones proven on hardware.
+
+What is *not* assumed is the fill: `#FF0000`, confirmed working by a user
+who got one recognized, in a thread that also turned up something the
+docs omit - Shaper's colour match is **case-sensitive**, so `red` and
+`#FF0000` work while `Red` and `RED` do not, contrary to the SVG spec.
+Don't "tidy" that into a named colour.
+
+Worth remembering how this was found: not by reasoning, but by uploading
+the same part twice with two different anchor positions and looking at
+what the machine did. The reasoning had been perfectly plausible and
+perfectly wrong, which is now the fourth time on this project - after bit
+size, the value format, and the gray baseline. The fix was confirmed the
+same way.
+
+**The Upload section's Default places a Center anchor** on a file that
+hasn't got one - but a file that already carries its own keeps it,
+exactly as it is, and in that case the upload isn't rewritten at all, so
+those bytes reach the device unchanged. There is nowhere on the upload
+form to warn about replacing someone's anchor, so it never does.
+
+The option is labelled just "Anchor: Default" for that reason. Writing
+"Default (Center)" would tell someone uploading a carefully placed
+Affinity anchor that it was about to be overwritten, which is the
+opposite of what happens.
+
+The consequence worth knowing is that a file with no anchor now gets one,
+and there is no longer a "remove" option - Center is treated as the
+neutral choice. That is very nearly true but not exactly: a Center anchor
+still pins orientation, where no anchor at all leaves the Origin's own
+nine points to do the whole job. If a file ever needs to carry no anchor,
+that has to come back.
+
+**In the editor the dropdown reports state, not intent.** It shows what
+the file currently has - a standard position read back from the
+geometry, or **Custom Anchor** for a triangle someone placed themselves.
+A file only reads as a standard position if the vertex is on that corner
+AND the legs point the way we draw them, so a hand-made anchor that
+happens to sit on a corner still reads as custom and still warns before
+being replaced. Nothing is written into the file to track this; there is
+no Shaper field for it, and inventing one would put RouterDrive-specific
+junk in everybody's SVG.
+
+**Anchors are protected on both write paths.** Placing a cut type - by
+blanket upload or per-line edit - skips any red-filled shape. Without
+that, uploading an Affinity file that already had an anchor while also
+choosing a cut type would recolour the anchor into a cut and destroy it;
+That case is covered off-device, and disabling the anchor marking fails
+it. Shaper allows one custom anchor per object, so choosing
+a position replaces an existing anchor rather than adding a second, and
+the editor asks first because that discards geometry the user placed
+deliberately.
 
 **A side effect worth knowing:** because Outside/Inside/Pocket are
 encoded as *fills*, a file with those cut types set renders as solid
@@ -485,20 +626,29 @@ its on-screen preview and draws thin outlines in its own palette (see
 the legend under the viewer), so the drawing stays readable while you
 work on it.
 
-**Why tool diameter matters:** Outside/Inside/Pocket are all *offset*
-cuts - Origin has to know the bit diameter to compute how far to offset
-the toolpath from the drawn line, so a real export always carries
-`shaper:toolDia` (and `shaper:cutOffset`, the *additional* offset beyond
-the bit radius - `0` unless you want extra clearance) for those three
-types. On Line and Guide need no offset, so no tool diameter is required
-and the field stays hidden. Note the value format: Shaper writes these
-with **no space** between number and unit (`0.125in`, `6.35mm`) - the
-documented `shaper:cutDepth` examples do the same - so this app does
-too. An earlier version wrote `0.125 in` with a space, which is one of
-several things that had to be corrected before this worked at all.
+**Bit size isn't in the file.** Outside/Inside/Pocket are *offset* cuts,
+so Origin does need a bit diameter to work out how far to offset the
+toolpath - but it takes that from the bit you tell the machine you've
+loaded, not from the SVG. Earlier versions of this app wrote a
+`shaper:toolDia` (and a `shaper:cutOffset`) attribute and offered a bit
+size dropdown to go with it. Testing on a real Origin showed the setting
+on the tool never moved no matter what the file said, so both the
+attribute and the dropdown were removed: they were clutter that implied
+the file was in charge when the machine always was. The per-line editor
+also strips those two attributes from files that still carry them, so an
+old file gets tidied up the first time you edit it. **Set your bit on the
+Origin, as you would for any other file.**
 
-Leave the cut type dropdown on "unset" and the depth/tool diameter
-fields blank to upload a file exactly as-is (the pre-existing behavior) -
+Note the value format for the attributes that do matter: Shaper writes
+them with **no space** between number and unit (`9mm`, `0.25in`) - the
+documented `shaper:cutDepth` examples do the same - so this app does
+too. An earlier version wrote `9 mm` with a space, which is one of
+several things that had to be corrected before this worked at all.
+Reading is still tolerant of the old spaced form, so files saved by
+those builds still reopen correctly.
+
+Leave the cut type dropdown on "Default" and the depth field
+blank to upload a file exactly as-is (the pre-existing behavior) -
 useful if a file already has its own per-shape cut types you don't want
 overwritten, e.g. one you exported from Origin itself. Whichever values
 you do pick here apply uniformly to every shape in that upload - this is
@@ -515,7 +665,7 @@ box-within-a-box design, where the outer line should be cut all the way
 through (Inside) and the inner one should be a shallower Pocket. The
 Upload section's cut type dropdown (above) can only apply one type to an
 entire file, so for this, upload the file first (leave cut type
-"unset," or set whatever the majority of lines should be - either
+"Default," or set whatever the majority of lines should be - either
 way, you can change any of it after), then click that file's **Cut
 type** cell in the file list.
 
@@ -524,8 +674,7 @@ in the browser. Click a line to select it (its outline turns cyan);
 shift-click to add more lines to the selection so you can set several at
 once. With something selected, pick a **Cut type** in the side panel
 (same Outside/Inside/Pocket/On Line/Guide choices as the Upload section,
-plus **Tool diameter** and **Cut depth** for the types that need them),
-then click **Apply to selected** - the selected lines are recolored to
+plus **Cut depth**), then click **Apply to selected** - the selected lines are recolored to
 match their new cut type (a small legend in the panel shows which color
 means what) so you can see at a glance what's been set and what hasn't
 (unset lines stay black). Repeat for as many different lines/cut types
@@ -538,7 +687,7 @@ Nothing is written to the device until you click **Save changes** -
 closing the editor (the **Close**/**Cancel** buttons) without saving
 asks you to confirm first if you've applied anything. Once a file has
 more than one cut type on it (either from this editor, or because it was
-uploaded with cut type "unset" and already had mixed types baked in
+uploaded with cut type "Default" and already had mixed types baked in
 from wherever it came from), its **Cut type** column shows **Mixed**
 instead of a single type - see "The file list" below.
 
@@ -602,8 +751,14 @@ be undone.
 
 ## The file list
 
-Each file's row shows a checkbox, its name, size, upload date, cut type,
-and bit size. Check any number of files - this also turns on the
+Each file's row shows a checkbox, its name, then size, cut type and
+upload date. Those last three share one fixed column width so they line
+up as an evenly spaced block at the right of the table, leaving the name -
+the longest and most variable value, and the one you actually read - all
+the remaining space. Below about 560px wide there isn't room for both, so
+column sizing goes back to the browser and the name keeps its space; a
+phone shows a tidy table rather than filenames wrapped one letter per
+line. Check any number of files - this also turns on the
 **"Rename"**, **"Move"** and **"Delete"** buttons beneath the table (all
 start greyed out/inactive, since none of them does anything with nothing
 selected). The checkbox in the header selects/deselects every row
@@ -657,23 +812,35 @@ time instead of UTC). If your network has no internet access, or a file
 was uploaded before the very first sync completed, its date just shows
 as "-" instead of guessing.
 
-The **Cut type** and **Bit size** columns read straight off each file's
-own `shaper:cutType`/`shaper:toolDia` attributes (see "Cut type & cut
-depth" above) - RouterDrive doesn't keep a separate database of what you
-uploaded, it peeks at the file's own content instead. If every shape in
-the file agrees on one cut type, that's what shows; if they don't (either
-because you gave individual lines different types with the per-line
-editor - see "Editing individual lines' cut type" above - or because the
-file already had more than one cut type baked in when it arrived, e.g.
-uploaded with cut type left "unset"), the column shows **Mixed**
-instead of guessing which one to display.
+The **Cut type** column reads straight off each file's own content (see
+"Cut type & cut depth" above) - RouterDrive doesn't keep a separate
+database of what you uploaded, it peeks at the file itself instead. If
+every shape in the file agrees on one cut type, that's what shows; if
+they don't (either because you gave individual lines different types with
+the per-line editor - see "Editing individual lines' cut type" above - or
+because the file already had more than one cut type baked in when it
+arrived, e.g. uploaded with cut type left "Default"), the column shows
+**Mixed** instead of guessing which one to display.
 
-Files that carry no `shaper:` attributes at all get a second pass: the
-same fill/stroke colors Origin itself reads (see "How cut types are
-actually encoded" above) are scanned for directly, so a file coloured
-correctly in Affinity, Illustrator or Inkscape reports its real cut types
-rather than looking empty. That scan is deliberately tolerant about
-spelling - `#000`, `#000000`, `rgb(0,0,0)` and CSS `style="fill:..."`
+A file can state a cut type two ways - a `shaper:cutType` attribute, or
+the fill/stroke colors Origin itself reads - and **both are collected
+into one set, neither outranks the other.** That matters more than it
+sounds. An earlier version let the attribute win outright and only looked
+at colors for files carrying no attributes at all, which broke the most
+ordinary editing workflow there is: convert a DXF (every path gray, so On
+Line), then set one shape to Outside in the per-line editor. The edited
+shape is the only one with an attribute, so the scan saw a single value,
+called the whole file **Outside**, and discarded the colors - hiding the
+several On Line paths sitting right beside it. It should have said Mixed.
+Reported from real use, then reproduced off-device before anything was
+changed - along with the two cases the union could plausibly have broken
+(one type stated both ways must stay that type, not become Mixed).
+
+Because the two are unioned, an unrecognized value on either side simply
+contributes nothing rather than overriding anything.
+
+The color half is deliberately tolerant about spelling - `#000`,
+`#000000`, `rgb(0,0,0)` and CSS `style="fill:..."`
 all count, and any equal-RGB gray is a gray, matching Shaper's own
 guidance. It is also deliberately not per-element (associating a fill
 with its own shape would mean parsing whole `<path>` tags, `d` attribute
@@ -681,20 +848,24 @@ and all, which won't fit the small streaming buffer `readShaperInfo()`
 uses) - it reports which cut types appear anywhere in the file, which is
 exactly what the column is for.
 
-One judgement call worth knowing about: a **plain gray stroke on its own
-counts as nothing set, not as On Line**. Gray stroke is what the DXF
-converter emits for every path so that a freshly converted file is valid
-to Origin, so treating it as a deliberate choice would label every
-single unedited upload "On Line". An explicit `shaper:cutType="online"`
-does show as On Line - that's a statement of intent, the bare color is a
-baseline. The practical cost is that a file where someone deliberately
-set *everything* to On Line in another app reads as Unset; it's
-byte-identical to the baseline, so there's nothing to tell them apart,
-and the resulting cut is the same either way.
+One judgement call, and it was made the wrong way round at first: a
+**plain gray stroke reads as On Line**, including on a file the DXF
+converter just produced with cut type left "Default". An earlier version
+treated bare gray as a neutral baseline and reported "Unset" for those,
+on the reasoning that otherwise every unedited upload would be labelled.
+But the column's job is to say what Origin will do with the file, and
+Origin will cut on the line - the old answer described what the uploader
+had picked in the dropdown instead. It also silently mislabelled a file
+where someone had deliberately set everything to On Line in another app,
+which is byte-identical to a converted file and equally deserving of an
+honest answer.
 
-A file with nothing detectable by either route shows **Unset** in both
-columns. The **Cut type** cell is itself a button: click it (whatever it
-currently shows) to open the per-line editor for that file.
+**Unset** still means something, and this is what earns it: a file with
+nothing either route can detect - no `shaper:` attributes, and no color
+Origin recognizes (a plain black outline from a generic drawing tool,
+say). That file genuinely has no cut type for the machine to read. The
+**Cut type** cell is itself a button: click it (whatever it currently
+shows) to open the per-line editor for that file.
 
 Once there are more than 10 files (`FILES_PER_PAGE` in `config.h`), a
 search box and Prev/Next pager appear above the table so the list stays
@@ -714,14 +885,12 @@ usable instead of growing into one long scroll.
 - The captive-portal redirect is a basic "send everything to /" approach;
   some phones/OSes are pickier about what makes them auto-pop the sign-in
   page. Manually browsing to the AP's IP always works as a fallback.
-- The cut-type dropdown's `pocket`/`online`/`guide` values are inferred,
-  not hardware-confirmed like `outside`/`inside` are - see "Cut type &
-  cut depth" above. Worth a real test upload before trusting them.
-- The cut-type/tool-diameter fix (adding `shaper:toolDia`/`cutOffset` and
-  fixing the `xmlns:shaper` namespace declaration - see "Cut type & cut
-  depth" above) hasn't been re-verified on real hardware yet since it was
-  made in response to a real bug report. Test an Outside/Inside/Pocket
-  cut with a tool diameter set before relying on it.
+- Outside and Pocket are hardware-confirmed on a real Origin (a
+  box-within-a-box test part, outer line Outside, inner line Pocket, cut
+  types read correctly off the file). Inside, On Line and Guide are
+  written with the same color encoding from the same table, so they
+  should behave identically, but nobody has put those three on the
+  machine yet - worth a test cut before trusting them for a real job.
 - Folders (see "Folders" above), including creating/deleting them and
   moving files between them, are new and not yet hardware-tested -
   confirm the Origin actually shows subfolder contents the way you expect
@@ -736,39 +905,62 @@ usable instead of growing into one long scroll.
   rather than an always-visible dropdown - both are Playwright-verified
   against the real extracted page script but not yet exercised against
   the device itself.
-- The file list's **Cut type**/**Bit size** columns read each file's
-  `shaper:cutType`/`shaper:toolDia` attributes straight off a bounded
-  scan of the file's own content (up to 4KB from the front of the file -
-  see `readShaperInfo()`/`scanAttrMixed()` in `web_server.cpp`), done
-  once per file while the folder listing is already built - this is also
-  how "Mixed" gets detected (more than one distinct value found within
-  that same 4KB window). Verified with a standalone C++ test of the
-  extraction/mixed-detection logic against realistic and edge-case SVG
-  content (no shaper attributes at all, On Line/Guide with no toolDia,
-  multiple shapes agreeing and disagreeing), but not yet run against a
-  real uploaded file on the device - if a file's first shape has an
-  unusually long `d` attribute (a very complex tessellated curve) ahead
-  of its `shaper:*` attributes, the 4KB scan could miss later, differing
-  values entirely and under-report "Mixed" as a single type (or "-");
-  worth watching for on a folder with genuinely complex geometry.
+- **What the file list costs to render.** Two things were measured and
+  fixed rather than assumed. First, `readShaperInfo()` was called during
+  the directory walk, so every file in the folder was read end to end
+  even though at most `FILES_PER_PAGE` rows get drawn - roughly 800KB off
+  flash to render ten lines of a 40-file folder, growing with the
+  library. Sorting, searching and paging need only names and dates, so
+  they now run first and the scan happens afterwards for the current
+  page's files alone. Second, the scan itself worked in Arduino `String`s:
+  measured at 40 heap allocations and 57KB of churn for a real 19KB
+  Shaper export, and 200 allocations and 305KB for a 100KB drawing - all
+  short-lived and odd-sized, on a board with roughly 300KB of usable
+  heap. It is now char*-based with one reused buffer: zero allocations,
+  and about 3x faster. Those numbers come from a benchmark holding both
+  implementations side by side, which also asserts the two agree on every
+  input - that is how the rewrite was checked before it went in.
+- The file list's **Cut type** column used to read only the first 4KB of
+  each file, which was a real bug: a per-line edit further into the file
+  was invisible, so a genuinely mixed file reported a single type (or
+  nothing at all). `readShaperInfo()` now streams the whole file in
+  overlapping chunks instead, with a generous hard cap, so an attribute
+  anywhere in the file is found. It prefers `shaper:cutType` and falls
+  back to classifying fill/stroke colors, which is what lets a file
+  color-coded in another app report its cut types here. Covered by
+  standalone C++ tests including attributes straddling a chunk boundary
+  and a real Shaper Studio export, and confirmed on the device against
+  real uploaded files.
 - The per-line cut editor (see "Editing individual lines' cut type"
-  above) is new this session and entirely unverified on real hardware -
-  Playwright-tested against the real extracted page script (opening a
-  fetched SVG, clicking to select single and multiple lines, applying a
-  cut type/depth/tool diameter to the selection, the "Mixed" round trip
-  end to end) and screenshot-checked for layout, but every actual byte
-  it writes still goes through the same `/upload` endpoint a normal
-  upload does, so confirm on the device that a file edited this way
-  imports into the Origin with the right per-line cut types before
-  relying on it for a real job. It also adds a new `GET /svg` route
+  above) is Playwright-tested against the real extracted page script
+  (opening a fetched SVG, clicking to select single and multiple lines,
+  applying a cut type and depth to the selection, the "Mixed" round trip
+  end to end), screenshot-checked for layout, and confirmed end to end on
+  a real Origin. It also adds a new `GET /svg` route
   (`handleGetSvg()` in `web_server.cpp`) that reads a stored file's
   entire content into memory and serves it back to the browser - unlike
-  every other per-file read in this app, which deliberately caps itself
-  at 4KB to protect the ESP32's limited SRAM, this one reads the whole
-  file since it only ever runs for one file at a time, on demand. No
-  ESP32 toolchain is available where this was built, so neither the
-  route itself nor that memory tradeoff has been exercised on real
-  hardware yet - watch for it failing on an unusually large SVG.
+  the cut-type scan, this one used to read the whole file into SRAM,
+  copy it into a String, and hand that to send() - which copies it again.
+  Three copies of the file resident at once, on a device that had just
+  built a page String of its own. Arduino builds with exceptions off, so a
+  failed `new` there returns null and the next line writes through it: a
+  reboot rather than an error. It now streams in 1KB pieces, so peak use
+  is one small buffer whatever the file's size.
+
+  Worth knowing because a real stall was seen once - the editor stuck on
+  "Loading...", the page unresponsive, then fine again after a wait, which
+  is what a reboot-and-reconnect looks like from the browser. That was
+  never reproduced or confirmed, so this is a plausible cause removed
+  rather than a diagnosed bug fixed. If it recurs, the Serial Monitor
+  settles it: a fresh "=== RouterDrive starting ===" banner means the
+  device rebooted, and anything else means look elsewhere.
+- **Renaming a file used to lose its date.** `FFat.rename()` doesn't
+  carry the timestamp to the new directory entry, so a renamed file came
+  back with a time before `formatDateTime()`'s sanity cutoff and showed as
+  "-" in the Uploaded column, as though it predated the clock ever being
+  set. `handleRename()` now reads the old time before renaming and puts it
+  back afterwards with `utime()` on the VFS path (`/ffat` plus the path
+  FFat itself uses). Nothing but the date was ever affected.
 - Very rarely, restarting RouterDrive while it's plugged into the Origin
   has shown the drive briefly enumerate (Origin shows "No files found",
   meaning it did mount it) and then drop out again (back to "No USB drive

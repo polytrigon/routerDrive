@@ -27,8 +27,9 @@ void setup() {
 
   // Brief pause before touching Wi-Fi - see USB_WIFI_STARTUP_SETTLE_MS in
   // config.h for why (a rare USB-enumeration-vs-radio-startup race on the
-  // ESP32-S3).
-  delay(USB_WIFI_STARTUP_SETTLE_MS);
+  // ESP32-S3). ledDelay() rather than delay() so the boot blink keeps
+  // moving - loop() isn't running yet.
+  ledDelay(USB_WIFI_STARTUP_SETTLE_MS);
 
   wifiPortalInit();
   ledApplyIdleState(); // reflect whichever mode wifiPortalInit() landed in (AP or STA)

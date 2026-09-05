@@ -11,6 +11,7 @@
 #include <FFat.h>
 #include <FS.h>
 #include <time.h>
+#include <utime.h>  // restoring a renamed file's timestamp - see handleRename()
 #include <ctype.h>
 #include <stdio.h>
 #include <vector>
@@ -219,11 +220,10 @@ struct FileEntry {
   size_t size;
   time_t mtime;
   String cutType; // raw shaper:cutType value, e.g. "outside" - see readShaperInfo()
-  String toolDia;  // raw shaper:toolDia value, e.g. "0.25 in"
 };
 
 // Every shape this app writes shaper:* attributes onto used to carry the
-// same cutType/toolDia, back when applyShaperMetadata() only ever applied
+// same cutType, back when applyShaperMetadata() only ever applied
 // one chosen type to the whole file - but a file can now legitimately
 // carry different values per shape: either edited per-line through the
 // file list's cut editor, or uploaded straight from a real Origin export
@@ -243,7 +243,8 @@ struct FileEntry {
 // upload time (so the attribute always showed up almost immediately).
 // It quietly broke once per-line editing shipped: a real-hardware test
 // edited two shapes deep into a multi-KB file and the file list showed
-// "-"/"-" for both cut type AND bit size, even though the shapes'
+// "-" for the cut type (a Bit size column existed then too, and showed
+// the same), even though the shapes'
 // attributes were saved correctly and the editor itself displayed them
 // fine on reopen (it reads the whole file via GET /svg, no size cap) -
 // their attributes simply landed past the old 4KB window. Fixed below by
@@ -253,63 +254,16 @@ struct FileEntry {
 // old worst case (one ~2KB buffer instead of up to 4KB).
 static const size_t SHAPER_SCAN_CHUNK = 2048;
 // Every '<attr>="<value>"' this app ever writes is well under this many
-// bytes (the longest, shaper:cutOffset="0.125 in", is ~27) - carrying
+// bytes (the longest, shaper:cutDepth="0.125 in", is ~26) - carrying
 // this many bytes from the end of one chunk into the front of the next
 // guarantees no occurrence is ever split across a chunk boundary, so
-// each chunk can still be scanned independently with scanAttrMixed().
+// each chunk can still be scanned independently.
 static const size_t SHAPER_SCAN_OVERLAP = 64;
 // Sane ceiling on total bytes scanned per file, purely so one huge file
 // can't make the whole folder listing crawl - well beyond any realistic
 // converted SVG for this device's use case (a Shaper Studio export of a
 // real multi-shape design was ~19 KB).
 static const size_t SHAPER_SCAN_HARD_CAP = 262144;
-
-// Scans hay for every occurrence of attrName="..." and reports whether
-// two or more of them hold differing non-blank values. firstValue is set
-// to whichever value is found first regardless of the mixed result, so
-// callers get a usable single value in the common (non-mixed) case for
-// free. Returns as soon as one differing value is found rather than
-// counting every occurrence - the caller only needs to know "mixed or
-// not", not how many distinct values there are.
-static bool scanAttrMixed(const String &hay, const String &attrName, String &firstValue) {
-  firstValue = "";
-  String needle = attrName + "=\"";
-  int searchFrom = 0;
-  while (true) {
-    int idx = hay.indexOf(needle, searchFrom);
-    if (idx < 0) break;
-    int start = idx + needle.length();
-    int end = hay.indexOf('"', start);
-    if (end < 0) break;
-    String val = hay.substring(start, end);
-    searchFrom = end + 1;
-    if (val.length() == 0) continue;
-    if (firstValue.length() == 0) {
-      firstValue = val;
-    } else if (val != firstValue) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Runs one already-read chunk of text through scanAttrMixed() for a
-// single attribute name and merges the result into state (firstValue/
-// mixed) that the caller carries across chunks - so "mixed" reflects the
-// whole file scanned so far, not just this one chunk.
-static void scanChunkForAttr(const String &chunk, const String &attrName, String &firstValue, bool &mixed) {
-  if (mixed) return; // already known mixed, nothing left to learn
-  String chunkFirst;
-  bool chunkMixed = scanAttrMixed(chunk, attrName, chunkFirst);
-  if (chunkFirst.length() == 0) return; // attribute not present in this chunk
-  if (firstValue.length() == 0) {
-    firstValue = chunkFirst;
-  } else if (chunkFirst != firstValue) {
-    mixed = true;
-    return;
-  }
-  if (chunkMixed) mixed = true;
-}
 
 // ---------------------------------------------------------------------------
 // Cut type detection from COLOR, for files this app didn't write.
@@ -337,71 +291,69 @@ static const uint8_t CUTCOLOR_POCKET  = 1 << 2; // gray fill
 static const uint8_t CUTCOLOR_ONLINE  = 1 << 3; // gray stroke
 static const uint8_t CUTCOLOR_GUIDE   = 1 << 4; // blue stroke
 
-// Normalizes a CSS/SVG color to lowercase 6-digit hex, or "" if it isn't
-// one we can compare (none, currentColor, a named color, a gradient url).
-// Handles #abc shorthand and rgb(r, g, b) since other design tools emit
-// both - this is exactly the code path that exists to read THEIR files,
-// so being liberal about the spelling matters here.
-static String normalizeColor(const String &raw) {
-  String v = raw;
-  v.trim();
-  v.toLowerCase();
-  if (v.startsWith("#")) {
-    String hex = v.substring(1);
-    if (hex.length() == 3) {
-      String out = "";
-      for (int i = 0; i < 3; i++) {
-        out += hex[i];
-        out += hex[i];
-      }
-      return out;
+// Reads a color literal straight out of the buffer it was found in, with
+// no String and no allocation: parses #abc, #aabbcc and rgb(r, g, b) into
+// channel values, or returns false for anything not comparable (none,
+// currentColor, a named color, a gradient url). Liberal about spelling on
+// purpose - this is the code path that exists to read OTHER tools' files.
+//
+// This whole scanner used to work in Arduino Strings, which meant an
+// allocation per chunk, per match and per parse step. Measured on a real
+// Shaper Studio export that was 40 allocations and 57KB of heap traffic
+// for one file; on a 100KB drawing, 200 allocations and 305KB. All of it
+// short-lived and odd-sized, which is the shape that fragments a heap
+// this small. It is now zero on both counts, and the benchmark that
+// established those numbers also asserts both versions return the same
+// answer for every input.
+static bool parseColorAt(const char *s, size_t len, int &r, int &g, int &b) {
+  while (len && (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')) { s++; len--; }
+  while (len && (s[len - 1] == ' ' || s[len - 1] == '\t' || s[len - 1] == '\r' || s[len - 1] == '\n')) len--;
+  if (len == 0) return false;
+  auto hexVal = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return -1;
+  };
+  if (s[0] == '#') {
+    if (len == 4) { // #abc shorthand
+      int h[3];
+      for (int i = 0; i < 3; i++) { h[i] = hexVal(s[1 + i]); if (h[i] < 0) return false; }
+      r = h[0] * 17; g = h[1] * 17; b = h[2] * 17; // 0xa -> 0xaa
+      return true;
     }
-    if (hex.length() == 6) return hex;
-    return "";
+    if (len == 7) {
+      int h[6];
+      for (int i = 0; i < 6; i++) { h[i] = hexVal(s[1 + i]); if (h[i] < 0) return false; }
+      r = h[0] * 16 + h[1]; g = h[2] * 16 + h[3]; b = h[4] * 16 + h[5];
+      return true;
+    }
+    return false;
   }
-  if (v.startsWith("rgb(")) {
-    int close = v.indexOf(')');
-    if (close < 0) return "";
-    String inner = v.substring(4, close);
-    int vals[3] = {-1, -1, -1};
-    int idx = 0, from = 0;
-    while (idx < 3) {
-      int comma = inner.indexOf(',', from);
-      String part = (comma < 0) ? inner.substring(from) : inner.substring(from, comma);
-      part.trim();
-      if (part.length() == 0) return "";
-      vals[idx++] = part.toInt();
-      if (comma < 0) break;
-      from = comma + 1;
+  if (len > 4 && strncasecmp(s, "rgb(", 4) == 0) {
+    int vals[3] = {0, 0, 0};
+    int idx = 0;
+    size_t i = 4;
+    while (i < len && idx < 3) {
+      while (i < len && (s[i] == ' ' || s[i] == ',')) i++;
+      if (i >= len || s[i] < '0' || s[i] > '9') break;
+      int v = 0;
+      while (i < len && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); i++; }
+      if (v > 255) return false;
+      vals[idx++] = v;
     }
-    if (idx < 3) return "";
-    String out = "";
-    for (int i = 0; i < 3; i++) {
-      if (vals[i] < 0 || vals[i] > 255) return "";
-      char b[3];
-      snprintf(b, sizeof(b), "%02x", vals[i]);
-      out += b;
-    }
-    return out;
+    if (idx < 3) return false;
+    r = vals[0]; g = vals[1]; b = vals[2];
+    return true;
   }
-  return "";
-}
-
-static bool hexChannels(const String &hex, int &r, int &g, int &b) {
-  if (hex.length() != 6) return false;
-  r = (int)strtol(hex.substring(0, 2).c_str(), nullptr, 16);
-  g = (int)strtol(hex.substring(2, 4).c_str(), nullptr, 16);
-  b = (int)strtol(hex.substring(4, 6).c_str(), nullptr, 16);
-  return true;
+  return false;
 }
 
 // Origin matches these tolerantly rather than by exact hex - Shaper's own
 // "readable gray" guide just tells you to make R, G and B equal - so
 // match on the same basis instead of demanding the exact values Shaper's
 // software happens to emit.
-static uint8_t classifyFillColor(const String &hex) {
-  int r, g, b;
-  if (!hexChannels(hex, r, g, b)) return 0;
+static uint8_t classifyFill(int r, int g, int b) {
   if (r == g && g == b) {
     if (r <= 32) return CUTCOLOR_OUTSIDE;  // black fill
     if (r >= 224) return CUTCOLOR_INSIDE;  // white fill
@@ -410,9 +362,7 @@ static uint8_t classifyFillColor(const String &hex) {
   return 0;
 }
 
-static uint8_t classifyStrokeColor(const String &hex) {
-  int r, g, b;
-  if (!hexChannels(hex, r, g, b)) return 0;
+static uint8_t classifyStroke(int r, int g, int b) {
   // Blue guide lines: clearly blue-dominant rather than an exact #0068FF.
   if (b >= 128 && b > r + 60 && b > g + 60) return CUTCOLOR_GUIDE;
   // Gray stroke = On Line. Pure black is excluded on purpose: it's the
@@ -422,38 +372,38 @@ static uint8_t classifyStrokeColor(const String &hex) {
   return 0;
 }
 
-// Collects every fill/stroke color in one chunk, in both the presentation
-// attribute form (fill="#000") and the inline style form
+// Collects every fill/stroke color in one NUL-terminated buffer, in both
+// the presentation attribute form (fill="#000") and the inline style form
 // (style="fill:#000;stroke:none") that other design tools commonly emit.
-// Note the needles include the delimiter, so stroke-width="..." and
+// The needles include the delimiter, so stroke-width="..." and
 // fill-rule:... can't be mistaken for a color.
-static void scanChunkColors(const String &chunk, uint8_t &hits) {
-  struct { const char *needle; char terminator; bool isFill; } probes[] = {
-    {"fill=\"",   '"', true},
-    {"stroke=\"", '"', false},
-    {"fill:",     ';', true},
-    {"stroke:",   ';', false},
+static void scanBufferColors(const char *buf, size_t len, uint8_t &hits) {
+  struct { const char *needle; size_t nlen; char terminator; bool isFill; } probes[] = {
+    {"fill=\"",   6, '"', true},
+    {"stroke=\"", 8, '"', false},
+    {"fill:",     5, ';', true},
+    {"stroke:",   7, ';', false},
   };
+  const char *endBuf = buf + len;
   for (size_t p = 0; p < sizeof(probes) / sizeof(probes[0]); p++) {
-    String needle = probes[p].needle;
-    int from = 0;
+    const char *cur = buf;
     while (true) {
-      int idx = chunk.indexOf(needle, from);
-      if (idx < 0) break;
-      int start = idx + needle.length();
+      const char *hit = strstr(cur, probes[p].needle);
+      if (!hit || hit >= endBuf) break;
+      const char *start = hit + probes[p].nlen;
       // A style-form value can end at ';' OR at the closing quote of the
       // style attribute itself, whichever comes first.
-      int end = chunk.indexOf(probes[p].terminator, start);
+      const char *stop = (const char *)memchr(start, probes[p].terminator, endBuf - start);
       if (probes[p].terminator == ';') {
-        int quote = chunk.indexOf('"', start);
-        if (quote >= 0 && (end < 0 || quote < end)) end = quote;
+        const char *quote = (const char *)memchr(start, '"', endBuf - start);
+        if (quote && (!stop || quote < stop)) stop = quote;
       }
-      if (end < 0) break;
-      String value = chunk.substring(start, end);
-      from = end;
-      String hex = normalizeColor(value);
-      if (hex.length() == 0) continue;
-      hits |= probes[p].isFill ? classifyFillColor(hex) : classifyStrokeColor(hex);
+      if (!stop) break;
+      int r, g, b;
+      if (parseColorAt(start, (size_t)(stop - start), r, g, b)) {
+        hits |= probes[p].isFill ? classifyFill(r, g, b) : classifyStroke(r, g, b);
+      }
+      cur = stop;
     }
   }
 }
@@ -464,68 +414,110 @@ static int countBits(uint8_t v) {
   return n;
 }
 
+// Maps a shaper:cutType value onto the same bit the color scanner uses,
+// so the file's two ways of stating a cut type land in one shared set
+// instead of one overriding the other. An unrecognized value contributes
+// nothing, exactly like an unrecognized color. Compared in place against
+// the buffer rather than through a String, same as the colors above.
+static uint8_t cutTypeBitAt(const char *v, size_t len) {
+  if (len == 7 && memcmp(v, "outside", 7) == 0) return CUTCOLOR_OUTSIDE;
+  if (len == 6 && memcmp(v, "inside", 6) == 0) return CUTCOLOR_INSIDE;
+  if (len == 6 && memcmp(v, "pocket", 6) == 0) return CUTCOLOR_POCKET;
+  if (len == 6 && memcmp(v, "online", 6) == 0) return CUTCOLOR_ONLINE;
+  if (len == 5 && memcmp(v, "guide", 5) == 0) return CUTCOLOR_GUIDE;
+  return 0;
+}
+
+// Collects every shaper:cutType in one buffer into that shared set.
+// Buffers overlap by SHAPER_SCAN_OVERLAP bytes, so an occurrence sitting
+// near a boundary can be counted twice - harmless here, since OR-ing a
+// bit that is already set changes nothing. That is a real simplification
+// over what this replaced, which tracked "first value seen" plus a mixed
+// flag across chunks and had to be careful about exactly that overlap.
+static void scanBufferForCutTypeAttr(const char *buf, size_t len, uint8_t &bits) {
+  const char *cur = buf;
+  const char *endBuf = buf + len;
+  while (true) {
+    const char *hit = strstr(cur, "shaper:cutType=\"");
+    if (!hit || hit >= endBuf) break;
+    const char *start = hit + 16; // strlen("shaper:cutType=\"")
+    const char *stop = (const char *)memchr(start, '"', endBuf - start);
+    if (!stop) break;
+    bits |= cutTypeBitAt(start, (size_t)(stop - start));
+    cur = stop + 1;
+  }
+}
+
 // Streams an already-open file handle (left at its current read position
 // - call this before any other read on the same handle, and before the
-// handle is closed) through a small fixed-size buffer, pulling out
-// shaper:cutType/shaper:toolDia if present anywhere in it, and otherwise
-// falling back to reading the cut types straight out of the file's colors
-// (see the color scanner above). Only a file with neither - no shaper:*
-// attributes AND nothing but plain un-encoded outlines - comes back
-// blank, which the file list shows as "Unset". cutType comes back as the
-// sentinel raw value "mixed" (see cutTypeLabel()) when more than one
-// distinct cut type is present; toolDia comes back as the literal display
-// string "Mixed" directly, since (unlike cutType) it's shown as-is with
-// no separate label-mapping step.
-static void readShaperInfo(File &f, String &cutType, String &toolDia) {
+// handle is closed) through a small fixed-size buffer, collecting every
+// cut type the file states - both by shaper:cutType attribute and by the
+// fill/stroke colors Origin itself reads - into one set. cutType comes
+// back as the sentinel raw value "mixed" (see cutTypeLabel()) when that
+// set holds more than one, and blank (shown as "Unset") when the file
+// states none: no shaper:* attributes AND no color Origin recognizes.
+//
+// The two sources are unioned rather than ranked, and that is load
+// bearing. An earlier version let shaper:cutType win outright and only
+// consulted colors for files carrying no attributes at all, which broke
+// the most ordinary editing workflow there is: convert a DXF (every path
+// gray, so On Line), then set one shape to Outside in the per-line
+// editor. The edited shape is the only one with an attribute, so the
+// attribute scan saw a single value, called the file Outside, and threw
+// the colors away - hiding the several On Line paths sitting right next
+// to it. Reported from real use, reproduced in test_color_detect.cpp.
+static void readShaperInfo(File &f, String &cutType) {
   cutType = "";
-  toolDia = "";
   if (f.size() == 0) return;
-  bool cutTypeMixed = false, toolDiaMixed = false;
-  uint8_t colorHits = 0;
-  char *buf = new char[SHAPER_SCAN_CHUNK + 1];
-  String overlapTail = "";
+  uint8_t typeBits = 0;
+  // One buffer, allocated once and reused: the carried-over overlap sits
+  // at the front and each fresh read lands directly behind it, so there
+  // is no concatenation and no per-chunk String. (The previous version
+  // built `overlapTail + String(buf)` every pass, which is where most of
+  // that 40-to-200 allocations per file came from.)
+  char *buf = new char[SHAPER_SCAN_OVERLAP + SHAPER_SCAN_CHUNK + 1];
+  size_t tail = 0;
   size_t totalRead = 0;
   while (totalRead < SHAPER_SCAN_HARD_CAP) {
-    size_t n = f.read((uint8_t *)buf, SHAPER_SCAN_CHUNK);
+    size_t n = f.read((uint8_t *)buf + tail, SHAPER_SCAN_CHUNK);
     if (n == 0) break; // end of file
-    buf[n] = '\0';
+    size_t len = tail + n;
+    buf[len] = '\0'; // the scanners use strstr, so termination is required
     totalRead += n;
-    String chunk = overlapTail + String(buf);
-    scanChunkForAttr(chunk, "shaper:cutType", cutType, cutTypeMixed);
-    scanChunkForAttr(chunk, "shaper:toolDia", toolDia, toolDiaMixed);
-    scanChunkColors(chunk, colorHits);
-    // No early break on "both mixed" any more: the color scan has to see
-    // the whole file to be able to report a color-encoded file correctly,
-    // and stopping early would make the answer depend on where in the
-    // file the attributes happened to sit.
-    overlapTail = (chunk.length() > SHAPER_SCAN_OVERLAP) ? chunk.substring(chunk.length() - SHAPER_SCAN_OVERLAP) : chunk;
+    scanBufferForCutTypeAttr(buf, len, typeBits);
+    scanBufferColors(buf, len, typeBits);
+    // No early break once "mixed" is known: both scans have to see the
+    // whole file, and stopping early would make the answer depend on
+    // where in the file a given shape happened to sit.
+    tail = len > SHAPER_SCAN_OVERLAP ? SHAPER_SCAN_OVERLAP : len;
+    memmove(buf, buf + len - tail, tail);
   }
   delete[] buf;
-  if (cutTypeMixed) cutType = "mixed";
-  if (toolDiaMixed) toolDia = "Mixed";
 
-  // shaper:cutType, where present, is an explicit statement of intent and
-  // wins outright. Only fall back to colors for a file that carries none
-  // - i.e. one this app didn't write and that didn't come from Shaper
-  // Studio either.
-  if (cutType.length() > 0) return;
-
-  // A plain gray stroke on its own is the neutral baseline, not a choice:
-  // it's what this app's own DXF converter emits for every path so that a
-  // freshly converted file is valid to Origin, so treating it as "On Line
-  // was deliberately set" would label every single unedited upload. Only
-  // report a cut type once something other than that baseline shows up.
-  uint8_t meaningful = colorHits & ~CUTCOLOR_ONLINE;
-  if (meaningful == 0) return; // stays blank -> "Unset"
-  if (countBits(colorHits) > 1) {
+  // A gray stroke reads as On Line - including on a file this app's own
+  // DXF converter produced with cut type left on "Default". That file
+  // really is encoded as On Line, and the Origin really will cut on the
+  // line, so reporting "Unset" would be describing the uploader's intent
+  // rather than the file. This column answers "what will the machine do
+  // with this?", and an earlier version got that wrong in both
+  // directions: it also hid a third-party file whose author had
+  // deliberately set every line to On Line in Affinity or Inkscape.
+  //
+  // "Unset" keeps its meaning: a file with no recognized encoding at all
+  // - a plain black outline from a generic drawing tool, say - still has
+  // nothing here for Origin to read, and still reports Unset.
+  if (typeBits == 0) return; // stays blank -> "Unset"
+  if (countBits(typeBits) > 1) {
     cutType = "mixed";
-  } else if (colorHits & CUTCOLOR_OUTSIDE) {
+  } else if (typeBits & CUTCOLOR_OUTSIDE) {
     cutType = "outside";
-  } else if (colorHits & CUTCOLOR_INSIDE) {
+  } else if (typeBits & CUTCOLOR_INSIDE) {
     cutType = "inside";
-  } else if (colorHits & CUTCOLOR_POCKET) {
+  } else if (typeBits & CUTCOLOR_POCKET) {
     cutType = "pocket";
-  } else if (colorHits & CUTCOLOR_GUIDE) {
+  } else if (typeBits & CUTCOLOR_ONLINE) {
+    cutType = "online";
+  } else if (typeBits & CUTCOLOR_GUIDE) {
     cutType = "guide";
   }
 }
@@ -600,6 +592,8 @@ static String renderFilesSection() {
     viewFolder = ""; // unknown/stale folder (deleted, or a tampered link) - fall back to root
   }
 
+  // Cheap pass: names, sizes and dates only. Deliberately NOT the cut
+  // type - see the scan below for why that waits.
   std::vector<FileEntry> entries;
   {
     File dir = FFat.open(folderDirPath(viewFolder));
@@ -611,7 +605,6 @@ static String renderFilesSection() {
           e.name = basenameOf(String(f.name()));
           e.size = f.size();
           e.mtime = f.getLastWrite();
-          readShaperInfo(f, e.cutType, e.toolDia);
           entries.push_back(e);
         }
         f.close();
@@ -619,6 +612,59 @@ static String renderFilesSection() {
       }
     }
     dir.close(); // must close all handles before storageEndAppAccess() unmounts
+  }
+
+  // Sorting, searching and paging all happen on names and dates alone, so
+  // they can run here - before any file is opened - rather than after.
+  // That ordering is the point: it means the expensive part below only
+  // ever touches the handful of files actually about to be drawn.
+  std::sort(entries.begin(), entries.end(), [](const FileEntry &a, const FileEntry &b) {
+    return a.name < b.name;
+  });
+
+  int totalCount = (int)entries.size();
+  bool showControls = totalCount > FILES_PER_PAGE;
+
+  String query;
+  if (server.hasArg("q")) {
+    query = server.arg("q");
+  }
+  query.trim();
+
+  std::vector<FileEntry> filtered;
+  if (query.length() > 0) {
+    String needle = query;
+    needle.toLowerCase();
+    for (size_t i = 0; i < entries.size(); i++) {
+      if (nameContainsCI(entries[i].name, needle)) {
+        filtered.push_back(entries[i]);
+      }
+    }
+  } else {
+    filtered = entries;
+  }
+
+  int filteredCount = (int)filtered.size();
+  int totalPages = filteredCount == 0 ? 1 : (filteredCount + FILES_PER_PAGE - 1) / FILES_PER_PAGE;
+  int page = server.hasArg("page") ? server.arg("page").toInt() : 1;
+  if (page < 1) page = 1;
+  if (page > totalPages) page = totalPages;
+  int startIdx = (page - 1) * FILES_PER_PAGE;
+  int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
+
+  // Now the expensive part, for this page's rows only. readShaperInfo()
+  // reads a file end to end, so doing it during the directory walk above
+  // meant reading every file in the folder to render at most
+  // FILES_PER_PAGE rows - roughly 800KB off flash for a 40-file folder to
+  // draw ten lines, with the cost growing as the library grows. Deferring
+  // it here caps the work at one page's worth no matter how many files
+  // are stored. Reopening ten files by name costs far less than the reads
+  // it avoids.
+  for (int i = startIdx; i < endIdx; i++) {
+    File f = FFat.open(joinFolder(viewFolder, filtered[i].name));
+    if (!f) continue; // vanished between the walk and here - leave it blank
+    readShaperInfo(f, filtered[i].cutType);
+    f.close();
   }
 
   // Filenames per folder (root + every subfolder), for the upload JS's
@@ -652,38 +698,6 @@ static String renderFilesSection() {
   // folder dropdown right after this call, without mounting storage again.
   lastFolderList = folders;
   lastViewedFolder = viewFolder;
-
-  std::sort(entries.begin(), entries.end(), [](const FileEntry &a, const FileEntry &b) {
-    return a.name < b.name;
-  });
-
-  int totalCount = (int)entries.size();
-  bool showControls = totalCount > FILES_PER_PAGE;
-
-  String query;
-  if (server.hasArg("q")) {
-    query = server.arg("q");
-  }
-  query.trim();
-
-  std::vector<FileEntry> filtered;
-  if (query.length() > 0) {
-    String needle = query;
-    needle.toLowerCase();
-    for (size_t i = 0; i < entries.size(); i++) {
-      if (nameContainsCI(entries[i].name, needle)) {
-        filtered.push_back(entries[i]);
-      }
-    }
-  } else {
-    filtered = entries;
-  }
-
-  int filteredCount = (int)filtered.size();
-  int totalPages = filteredCount == 0 ? 1 : (filteredCount + FILES_PER_PAGE - 1) / FILES_PER_PAGE;
-  int page = server.hasArg("page") ? server.arg("page").toInt() : 1;
-  if (page < 1) page = 1;
-  if (page > totalPages) page = totalPages;
 
   String html = "<h2>Files</h2>";
 
@@ -739,24 +753,33 @@ static String renderFilesSection() {
   if (viewFolder.length() > 0) {
     html += "<input type='hidden' name='dir' value='" + htmlEscape(viewFolder) + "'>";
   }
-  html += "<table><tr><th><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th>Size</th><th>Uploaded</th><th>Cut type</th><th>Bit size</th></tr>";
+  // Column order and widths are set in style.css (.file-table): the three
+  // metadata columns share one fixed width so they line up as an evenly
+  // spaced block at the right, and Name takes everything left over.
+  html += "<table class='file-table'><tr><th class='col-check'><input type='checkbox' id='selectAllFiles' onclick='toggleAllFiles(this)'></th><th>Name</th><th class='col-meta'>Size</th><th class='col-meta'>Cut type</th><th class='col-meta'>Uploaded</th></tr>";
   if (filteredCount == 0) {
-    html += String("<tr><td colspan=6><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
+    html += String("<tr><td colspan=5><em>") + (query.length() > 0 ? "No files match your search." : "No files yet.") + "</em></td></tr>";
   } else {
-    int startIdx = (page - 1) * FILES_PER_PAGE;
-    int endIdx = min(filteredCount, startIdx + FILES_PER_PAGE);
+    // Deliberately reuses the startIdx/endIdx computed above rather than
+    // recomputing them: those same bounds decided which files got their
+    // cut type read, so if the two ever drifted apart this table would
+    // draw rows whose Cut type cell was never filled in.
     for (int i = startIdx; i < endIdx; i++) {
       const FileEntry &e = filtered[i];
       bool isNew = std::find(justUploaded.begin(), justUploaded.end(), e.name) != justUploaded.end();
+      // The "just uploaded" tick rides with the name rather than the date:
+      // it's about this file, and the three metadata columns need to stay
+      // the same width as each other to line up.
       String checkmark = isNew ? " <span style='color:#0a0' title='Just uploaded'>&#10003;</span>" : "";
-      html += "<tr><td><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
-      html += "<td>" + htmlEscape(e.name) + "</td><td>" + formatBytes(e.size) + "</td><td>" + formatDateTime(e.mtime) + checkmark + "</td>"
-              "<td><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
+      html += "<tr><td class='col-check'><input type='checkbox' class='rowcheck' name='name' value='" + htmlEscape(e.name) + "' onchange='updateBatchButtons()'></td>";
+      html += "<td>" + htmlEscape(e.name) + checkmark + "</td>"
+              "<td class='col-meta'>" + formatBytes(e.size) + "</td>"
+              "<td class='col-meta'><button type='button' class='link-btn cutTypeCell' data-name='" + htmlEscape(e.name) + "' data-dir='" + htmlEscape(viewFolder) +
               "' onclick='openCutEditorFromBtn(this)'>" + cutTypeLabel(e.cutType) + "</button></td>"
-              "<td>" + (e.toolDia.length() > 0 ? htmlEscape(e.toolDia) : String("Unset")) + "</td></tr>";
+              "<td class='col-meta'>" + formatDateTime(e.mtime) + "</td></tr>";
     }
   }
-  html += "<tr><td colspan=6 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
+  html += "<tr><td colspan=5 style='color:#666'>" + formatBytes(used) + " used of " + formatBytes(total) + "</td></tr>";
   html += "</table>";
   // A move destination exists whenever there's somewhere other than the
   // currently-viewed folder to put files: always true once you're inside
@@ -1024,7 +1047,7 @@ static String renderPage() {
   html += "<h2>Upload files</h2>";
   html += "<p class='sub'>Select DXF and/or SVG files, mixed together if you like. DXFs are automatically "
           "converted to the SVG format the Origin requires (handles most shapes, including text). Optionally "
-          "pick a folder to upload into, and blanket-assign a Shaper cut type, depth, and tool diameter to "
+          "pick a folder to upload into, and blanket-assign a Shaper cut type and depth to "
           "each file below.</p>";
   html += "<input type='file' id='uploadFile' accept='.dxf,.svg' multiple>";
   html += "<br><br>";
@@ -1039,8 +1062,13 @@ static String renderPage() {
   html += "<option value='__new__'>+ New folder...</option>";
   html += "</select>";
   html += "<br><br>";
-  html += "<select id='cutType' class='full-width' onchange='toggleToolDiaRow()'>"
-          "<option value='' selected>Cut type: unset</option>"
+  html += "<select id='cutType' class='full-width'>"
+          // "Default" rather than "unset": the file list uses "Unset" for a
+          // file with no encoding Origin can read, which is a different
+          // state from this one, and having both say the same word made a
+          // DXF uploaded on "unset" look like it contradicted itself when
+          // it showed up in the list as On Line.
+          "<option value='' selected>Cut type: Default</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
           "<option value='pocket'>Cut type: Pocket</option>"
@@ -1048,28 +1076,21 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>";
   html += "<br><br>";
-  html += "<div id='toolDiaWrap' style='display:none'>"
-          "<select id='toolDiaPreset' class='full-width' onchange='handleToolDiaPresetChange()'>"
-          "<option value='' selected>Tool diameter: choose one (required)</option>"
-          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
-          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
-          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
-          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
-          "<option value='3|mm'>Tool diameter: 3 mm</option>"
-          "<option value='6|mm'>Tool diameter: 6 mm</option>"
-          "<option value='8|mm'>Tool diameter: 8 mm</option>"
-          "<option value='10|mm'>Tool diameter: 10 mm</option>"
-          "<option value='__custom__'>Tool diameter: Custom...</option>"
-          "</select>"
-          "<br><br>"
-          "<div id='toolDiaCustomWrap' style='display:none'>"
-          "<div class='depth-row'>"
-          "<input type='number' id='toolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
-          "<select id='toolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
-          "</div>"
-          "<br><br>"
-          "</div>"
-          "</div>";
+  // Deliberately just "Default", not "Default (Center)". Center is only
+  // what this does for a file that HASN'T got an anchor; a file that
+  // brought its own keeps it, untouched. Naming Center in the label would
+  // tell someone uploading a carefully placed Affinity anchor that it is
+  // about to be overwritten, which is the opposite of what happens. Also
+  // matches the Cut type dropdown's own "Default" wording.
+  html += "<select id='uploadAnchor' class='full-width'>"
+          "<option value='' selected>Anchor: Default</option>"
+          "<option value='tl'>Anchor: Top left</option>"
+          "<option value='tr'>Anchor: Top right</option>"
+          "<option value='bl'>Anchor: Bottom left</option>"
+          "<option value='br'>Anchor: Bottom right</option>"
+          "<option value='c'>Anchor: Center</option>";
+  html += "</select>";
+  html += "<br><br>";
   html += "<div class='depth-row'>"
           "<input type='number' id='cutDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
           "<select id='cutDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
@@ -1120,7 +1141,7 @@ static String renderPage() {
   // button in the file list above (see cutTypeCell/openCutEditorFromBtn).
   // Fetches the real file's SVG from the new /svg route, renders it, and
   // lets the user click individual paths to give them their own cut
-  // type/depth/tool diameter instead of the whole-file value the Upload
+  // type and depth instead of the whole-file value the Upload
   // section's own controls apply. Static markup - openCutEditor() fills
   // in the title and injects the fetched SVG at open time.
   html += "<div id='cutEditorOverlay' class='modal-overlay' style='display:none'>"
@@ -1129,8 +1150,7 @@ static String renderPage() {
           "<h3 id='cutEditorTitle'>Edit cut types</h3>"
           "<button type='button' class='link-btn' onclick='closeCutEditor()'>Close</button>"
           "</div>"
-          "<p class='sub'>Click a line to select it. Shift-click to select more than one. Everything "
-          "you select shares whatever you set below.</p>"
+          "<p class='sub'>Click a line to select it. Shift-click to multi-select</p>"
           "<div class='cut-editor-body'>"
           "<div class='cut-editor-viewer'>"
           "<div id='cutEditorSvgWrap' class='cut-editor-svg-wrap'><p class='sub'>Loading...</p></div>"
@@ -1141,12 +1161,13 @@ static String renderPage() {
           "<div><span class='swatch' style='background:#888'></span>On Line</div>"
           "<div><span class='swatch' style='background:#c9950a'></span>Guide</div>"
           "<div><span class='swatch' style='background:#000'></span>Not set yet</div>"
+          "<div><span class='swatch' style='background:#e11d2e'></span>Anchor</div>"
           "<div><span class='swatch' style='background:#00b8ff'></span>Selected</div>"
           "</div>" // .cut-legend
           "</div>" // .cut-editor-viewer
           "<div class='cut-editor-panel'>"
           "<p id='cutEditorSelCount' class='sub'>No line selected.</p>"
-          "<select id='editCutType' class='full-width' onchange='toggleEditToolDiaWrap()'>"
+          "<select id='editCutType' class='full-width'>"
           "<option value='' selected>Cut type: choose one</option>"
           "<option value='outside'>Cut type: Outside</option>"
           "<option value='inside'>Cut type: Inside</option>"
@@ -1155,34 +1176,22 @@ static String renderPage() {
           "<option value='guide'>Cut type: Guide</option>"
           "</select>"
           "<br><br>"
-          "<div id='editToolDiaWrap' style='display:none'>"
-          "<select id='editToolDiaPreset' class='full-width' onchange='handleEditToolDiaPresetChange()'>"
-          "<option value='' selected>Tool diameter: choose one (required)</option>"
-          "<option value='0.125|in'>Tool diameter: 1/8 in</option>"
-          "<option value='0.25|in'>Tool diameter: 1/4 in</option>"
-          "<option value='0.375|in'>Tool diameter: 3/8 in</option>"
-          "<option value='0.5|in'>Tool diameter: 1/2 in</option>"
-          "<option value='3|mm'>Tool diameter: 3 mm</option>"
-          "<option value='6|mm'>Tool diameter: 6 mm</option>"
-          "<option value='8|mm'>Tool diameter: 8 mm</option>"
-          "<option value='10|mm'>Tool diameter: 10 mm</option>"
-          "<option value='__custom__'>Tool diameter: Custom...</option>"
-          "</select>"
-          "<br><br>"
-          "<div id='editToolDiaCustomWrap' style='display:none'>"
-          "<div class='depth-row'>"
-          "<input type='number' id='editToolDiaCustom' step='0.001' min='0' placeholder='Custom tool diameter'>"
-          "<select id='editToolDiaUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
-          "</div>"
-          "<br><br>"
-          "</div>"
-          "</div>"
           "<div class='depth-row'>"
           "<input type='number' id='editDepth' step='0.001' min='0' placeholder='Cut depth (optional)'>"
           "<select id='editDepthUnit'><option value='mm' selected>mm</option><option value='in'>inches</option></select>"
           "</div>"
           "<br>"
           "<button type='button' id='applyToSelectedBtn' disabled onclick='applyToSelectedShapes()'>Apply to selected</button>"
+          // The anchor sits below the cut-type controls and after Apply,
+          // not between Apply and the depth field, because it is not part
+          // of that action: it applies to the whole file and takes effect
+          // the moment it is chosen. Sitting directly above a disabled
+          // "Apply to selected" would imply you have to press that button
+          // to make it stick. The rule keeps it visibly a separate thing
+          // without dimming it - it is not inactive.
+          "<div class='panel-divider'></div>"
+          "<select id='editAnchor' class='full-width' onchange='handleEditAnchorChange()'>"
+          "</select>"
           "</div>" // .cut-editor-panel
           "</div>" // .cut-editor-body
           "<p id='cutEditorStatus' class='sub'></p>"
@@ -1384,15 +1393,6 @@ static String renderPage() {
           "}"
           "sel.dataset.prev = sel.value;"
           "}"
-          "function toggleToolDiaRow() {"
-          "var ct = document.getElementById('cutType').value;"
-          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
-          "document.getElementById('toolDiaWrap').style.display = needsOffset ? '' : 'none';"
-          "}"
-          "function handleToolDiaPresetChange() {"
-          "var isCustom = document.getElementById('toolDiaPreset').value === '__custom__';"
-          "document.getElementById('toolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
-          "}"
           // -----------------------------------------------------------
           // THE thing that actually makes the Origin honor a cut type.
           //
@@ -1445,7 +1445,197 @@ static String renderPage() {
           "el.setAttribute('fill', c.fill);"
           "el.setAttribute('stroke', c.stroke);"
           "}"
-          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, toolDiaVal, toolDiaUnit) {"
+          // No tool diameter here any more. Origin takes the bit size from
+          // what you tell it at the machine - the only thing that knows
+          // what's actually in the collet - and testing showed a file's
+          // shaper:toolDia never moved that setting, across many uploads
+          // where the file said 3.175mm and the machine stayed on 6.35mm.
+          // Shaper's own exports write it onto On Line paths too, where
+          // there is no offset to compute and it cannot mean anything,
+          // which reads as "the bit this design was drawn for" rather than
+          // an instruction. So it was a required field that changed
+          // nothing, and shaper:cutOffset alongside it was always "0in".
+          // shaper:cutDepth stays - that one Shaper documents as a real
+          // override, and it's a different thing that merely shares the
+          // namespace.
+          // ---- Shaper custom anchors ------------------------------------
+          // A custom anchor is a red right-angled triangle: the right-angle
+          // vertex is the design's reference point, the shorter leg is the
+          // X axis and the longer leg the Y axis.
+          //
+          // SIZE does not matter - "that right angle and it being red is
+          // key, nothing else to it", from Beau, who uses these on a real
+          // Origin. So the legs are sized purely for our own benefit: 5% of
+          // the drawing's smaller dimension for X, double for Y, which
+          // keeps the triangle proportionate and visible in the editor's
+          // preview whether the design is a coaster or a table top.
+          //
+          // The 2:1 ratio is NOT about size. It is about keeping "shorter
+          // leg" unambiguous: equal legs would leave nothing to say which
+          // one is X.
+          //
+          // DIRECTION is settled, by hardware test, and it is not what I
+          // first assumed. The legs used to be drawn INWARD from whichever
+          // corner was chosen, which meant a different orientation at every
+          // position. Two files cut on a real Origin showed what that
+          // costs: the bottom-right anchor (short leg left, long leg up)
+          // placed correctly, while the top-left one (short leg right, long
+          // leg down) came back with the WHOLE DESIGN ROTATED 180 degrees -
+          // which is exactly the rotation that turns the second orientation
+          // into the first.
+          //
+          // So the Origin reads orientation from the legs and rotates the
+          // design until the long (Y) leg points up. Orientation is now
+          // FIXED - short leg toward -x, long leg toward -y (up on screen),
+          // the configuration the machine accepted - and only the vertex
+          // moves between positions. A consequence worth knowing: at every
+          // corner except bottom-right the triangle now extends a little
+          // outside the drawing's bounds. That is fine - it is not cut -
+          // and it is the price of one orientation that works everywhere
+          // rather than four that each have to be lucky.
+          //
+          // Still untested: whether the Origin cares about the X leg too.
+          // Bottom-right works with X pointing left, so it evidently
+          // tolerates that, but a bl-style anchor (X right, Y up) would be
+          // the textbook frame and might be better still. Not changing it
+          // without a test - the current directions are the ones proven on
+          // hardware.
+          //
+          // What is NOT assumed: the fill. "#FF0000" is confirmed working
+          // by a user who got one recognized, and the same thread found
+          // Shaper's match is case-sensitive - "red" and "#FF0000" work,
+          // "Red" and "RED" do not, contrary to the SVG spec. Do not
+          // "tidy" this into a named color.
+          //
+          // A malformed anchor makes the Origin refuse the file outright
+          // ("unable to place design"), so a wrong guess is loud rather
+          // than silent - except for direction, where a well-formed but
+          // rotated anchor would be accepted and simply be wrong.
+          "var ANCHOR_FILL = '#FF0000';"
+          // Tags every red-filled shape so the rest of the code can leave
+          // anchors alone. Needs the element rendered - see
+          // withRenderedSvg() - because it reads the computed fill.
+          "function markAnchors(svgEl) {"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "for (var i = 0; i < shapes.length; i++) {"
+          "if (cutEditorIsAnchor(shapes[i])) shapes[i].setAttribute('data-anchor', '1');"
+          "}"
+          "}"
+          // The drawing's own bounds, ignoring any existing anchor and the
+          // editor's invisible hit proxies - an anchor must be placed
+          // relative to the design, not to a previous anchor.
+          "function svgContentBox(svgEl) {"
+          "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
+          "var minX = null, minY = null, maxX = null, maxY = null;"
+          "for (var i = 0; i < shapes.length; i++) {"
+          "var el = shapes[i];"
+          "if (el.getAttribute('data-anchor') || el.getAttribute('data-hit-proxy')) continue;"
+          "var b = null;"
+          "try { b = el.getBBox(); } catch (e) { continue; }"
+          "if (!b || (b.width === 0 && b.height === 0)) continue;"
+          "if (minX === null || b.x < minX) minX = b.x;"
+          "if (minY === null || b.y < minY) minY = b.y;"
+          "if (maxX === null || b.x + b.width > maxX) maxX = b.x + b.width;"
+          "if (maxY === null || b.y + b.height > maxY) maxY = b.y + b.height;"
+          "}"
+          "if (minX === null) return null;"
+          "return {x: minX, y: minY, w: maxX - minX, h: maxY - minY};"
+          "}"
+          // Note SVG's y axis points DOWN, so 'top' is the smaller y.
+          "function buildAnchorPath(doc, box, pos) {"
+          "var legX = Math.max(Math.min(box.w, box.h) * 0.05, 0.5);"
+          "var legY = legX * 2;"
+          "var vx, vy;"
+          "if (pos === 'tl') { vx = box.x; vy = box.y; }"
+          "else if (pos === 'tr') { vx = box.x + box.w; vy = box.y; }"
+          "else if (pos === 'bl') { vx = box.x; vy = box.y + box.h; }"
+          "else if (pos === 'br') { vx = box.x + box.w; vy = box.y + box.h; }"
+          "else { vx = box.x + box.w / 2; vy = box.y + box.h / 2; }"
+          // Fixed for every position - see the note above. Short leg left,
+          // long leg up: the one orientation a real Origin placed without
+          // rotating the design.
+          "var sx = -1, sy = -1;"
+          "var r = function(n) { return Math.round(n * 1000) / 1000; };"
+          "var d = 'M ' + r(vx) + ',' + r(vy) + ' L ' + r(vx + sx * legX) + ',' + r(vy) +"
+          "' L ' + r(vx) + ',' + r(vy + sy * legY) + ' Z';"
+          "var p = doc.createElementNS('http://www.w3.org/2000/svg', 'path');"
+          "p.setAttribute('d', d);"
+          "p.setAttribute('fill', ANCHOR_FILL);"
+          "p.setAttribute('stroke', 'none');"
+          "return p;"
+          "}"
+          // Replaces whatever anchor the file had - Shaper allows only one
+          // per object, so adding without removing would be invalid.
+          "function setAnchor(svgEl, pos) {"
+          "var existing = svgEl.querySelectorAll('[data-anchor]');"
+          "for (var i = 0; i < existing.length; i++) existing[i].parentNode.removeChild(existing[i]);"
+          "if (!pos) return true;"
+          "var box = svgContentBox(svgEl);"
+          "if (!box || box.w <= 0 || box.h <= 0) return false;"
+          "var p = buildAnchorPath(svgEl.ownerDocument || document, box, pos);"
+          "p.setAttribute('data-anchor', '1');"
+          "svgEl.appendChild(p);"
+          "return true;"
+          "}"
+          // getBBox() and getComputedStyle() both return nothing useful for
+          // an element that was parsed but never laid out, so anything that
+          // needs either has to happen while the SVG is attached. Parks it
+          // offscreen, runs fn, then takes the holder away again.
+          "function withRenderedSvg(svgEl, fn) {"
+          "var holder = document.createElement('div');"
+          "holder.setAttribute('style', 'position:absolute;left:-10000px;top:0;width:800px');"
+          "document.body.appendChild(holder);"
+          "holder.appendChild(svgEl);"
+          "try { return fn(); } finally { holder.parentNode.removeChild(holder); }"
+          "}"
+          // Which of our standard positions the file's anchor is at, or
+          // 'custom' for one it isn't - a triangle someone placed
+          // themselves in Affinity or Inkscape. Read back from the geometry
+          // rather than from a marker attribute we'd have to write into the
+          // file: Shaper has no field for this, and inventing one would put
+          // RouterDrive-specific junk in everybody's SVG.
+          //
+          // A file only counts as a standard position if the vertex is on
+          // that corner AND the legs point the way we draw them. An anchor
+          // at a corner but at some other angle is somebody's own work, and
+          // gets treated as custom so that replacing it still warns.
+          "function detectAnchorPosition(svgEl) {"
+          "var a = svgEl.querySelector('[data-anchor]');"
+          "if (!a) return null;"
+          "var d = a.getAttribute('d') || '';"
+          "var n = d.match(/-?[0-9.]+/g);"
+          "if (!n || n.length < 6) return 'custom';"
+          "var vx = +n[0], vy = +n[1], x2 = +n[2], y2 = +n[3], x3 = +n[4], y3 = +n[5];"
+          // Our shape: horizontal short leg to the left, vertical long leg up.
+          "if (!(Math.abs(y2 - vy) < 0.01 && x2 < vx)) return 'custom';"
+          "if (!(Math.abs(x3 - vx) < 0.01 && y3 < vy)) return 'custom';"
+          "var box = svgContentBox(svgEl);"
+          "if (!box) return 'custom';"
+          "var near = function(a1, b1) { return Math.abs(a1 - b1) <= Math.max(box.w, box.h) * 0.01 + 0.01; };"
+          "if (near(vx, box.x) && near(vy, box.y)) return 'tl';"
+          "if (near(vx, box.x + box.w) && near(vy, box.y)) return 'tr';"
+          "if (near(vx, box.x) && near(vy, box.y + box.h)) return 'bl';"
+          "if (near(vx, box.x + box.w) && near(vy, box.y + box.h)) return 'br';"
+          "if (near(vx, box.x + box.w / 2) && near(vy, box.y + box.h / 2)) return 'c';"
+          "return 'custom';"
+          "}"
+          "var ANCHOR_LABELS = {tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right', c: 'Center', custom: 'Custom Anchor'};"
+          // Cheap check used before deciding whether an upload needs
+          // rewriting at all.
+          "function svgHasOwnAnchor(svgText) {"
+          "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
+          "if (doc.querySelector('parsererror')) return false;"
+          "var el = doc.documentElement;"
+          "return withRenderedSvg(el, function() {"
+          "markAnchors(el);"
+          "return el.querySelectorAll('[data-anchor]').length > 0;"
+          "});"
+          "}"
+          "function stripAnchorMarks(svgEl) {"
+          "var marked = svgEl.querySelectorAll('[data-anchor]');"
+          "for (var i = 0; i < marked.length; i++) marked[i].removeAttribute('data-anchor');"
+          "}"
+          "function applyShaperMetadata(svgText, cutType, depthVal, depthUnit, anchorPos) {"
           "var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');"
           "if (doc.querySelector('parsererror')) { throw new Error('Could not parse SVG'); }"
           "var svgEl = doc.documentElement;"
@@ -1456,24 +1646,29 @@ static String renderPage() {
           "if (depthVal !== '' && depthVal !== null && !isNaN(parseFloat(depthVal))) {"
           "depthAttr = parseFloat(depthVal) + depthUnit;"
           "}"
-          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
-          "var toolDiaAttr = null;"
-          "if (needsOffset && toolDiaVal !== '' && toolDiaVal !== null && toolDiaVal !== undefined && !isNaN(parseFloat(toolDiaVal))) {"
-          "toolDiaAttr = parseFloat(toolDiaVal) + toolDiaUnit;"
-          "}"
+          "return withRenderedSvg(svgEl, function() {"
+          // Find the anchors FIRST, so the cut-type loop below can skip
+          // them. Without this, uploading an Affinity file that already
+          // had an anchor while also choosing a blanket cut type would
+          // recolor the anchor and destroy it - the same bug the per-line
+          // editor had, on the other code path.
+          "markAnchors(svgEl);"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) {"
+          "if (shapes[i].getAttribute('data-anchor')) continue;"
           "if (cutType) {"
           "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutType', cutType);"
           "applyShaperCutColors(shapes[i], cutType);"
           "}"
           "if (depthAttr) shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutDepth', depthAttr);"
-          "if (toolDiaAttr) {"
-          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
-          "shapes[i].setAttributeNS(SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
           "}"
-          "}"
-          "return new XMLSerializer().serializeToString(doc);"
+          // '' is the Default option: place a Center anchor, unless the
+          // file brought its own, which is left exactly as it is.
+          "if (anchorPos) { setAnchor(svgEl, anchorPos); }"
+          "else if (!svgEl.querySelector('[data-anchor]')) { setAnchor(svgEl, 'c'); }"
+          "stripAnchorMarks(svgEl);"
+          "return new XMLSerializer().serializeToString(svgEl);"
+          "});"
           "}"
           // -----------------------------------------------------------
           // Per-line cut editor (file list "Cut type" cell -> modal).
@@ -1492,6 +1687,31 @@ static String renderPage() {
           "var EDITOR_CUT_COLORS = {outside: '#1437c9', inside: '#0a8a3f', pocket: '#8a2be2', online: '#888', guide: '#c9950a'};"
           "var EDITOR_UNSET_COLOR = '#000';"
           "var EDITOR_SELECT_COLOR = '#00b8ff';"
+          "var EDITOR_ANCHOR_COLOR = '#e11d2e';"
+          // A Shaper "custom anchor" is not a cut - it's a right-angled
+          // triangle with a RED fill and no stroke, whose right-angle
+          // vertex tells Origin where the design's reference point is and
+          // whose legs define its axes. Red is the whole mechanism, same
+          // as gray means On Line. That matters here because the editor
+          // draws anything without a cutType in black, so an anchor looked
+          // exactly like a line nobody had set yet - click it, hit Apply,
+          // and applyShaperCutColors() would overwrite the red and quietly
+          // turn the file's anchor into a triangle the Origin cuts.
+          //
+          // Read through getComputedStyle so a named color ('red'), a hex
+          // and an rgb() all arrive in the same normalized form, and read
+          // it BEFORE cutEditorInitShape() forces fill:none for preview.
+          // Deliberately liberal - any red-dominant fill counts, not only
+          // a strict right triangle. A red shape encodes no cut type
+          // whatever its geometry, so declining to overwrite it is the
+          // right call even when it isn't a real anchor.
+          "function cutEditorIsAnchor(el) {"
+          "var f = window.getComputedStyle(el).fill || '';"
+          "var m = /rgba?\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)/.exec(f);"
+          "if (!m) return false;"
+          "var r = +m[1], g = +m[2], b = +m[3];"
+          "return r >= 128 && r > g + 60 && r > b + 60;"
+          "}"
           "var cutEditorState = {name: '', folder: '', svgEl: null, selected: [], dirty: false};"
           "function openCutEditorFromBtn(btn) {"
           "openCutEditor(btn.getAttribute('data-name'), btn.getAttribute('data-dir'));"
@@ -1502,7 +1722,6 @@ static String renderPage() {
           "document.getElementById('cutEditorSvgWrap').innerHTML = '<p class=\"sub\">Loading...</p>';"
           "document.getElementById('cutEditorStatus').textContent = '';"
           "document.getElementById('editCutType').value = '';"
-          "toggleEditToolDiaWrap();"
           "updateSelectionSummary();"
           "document.getElementById('cutEditorOverlay').style.display = 'flex';"
           "var url = '/svg?name=' + encodeURIComponent(name) + (folder ? '&dir=' + encodeURIComponent(folder) : '');"
@@ -1538,6 +1757,7 @@ static String renderPage() {
           "cutEditorState.svgEl = svgEl;"
           "var shapes = svgEl.querySelectorAll('path,rect,circle,ellipse,polygon,polyline,line');"
           "for (var i = 0; i < shapes.length; i++) cutEditorInitShape(shapes[i]);"
+          "updateAnchorInfo();"
           "}).catch(function(err) {"
           "document.getElementById('cutEditorSvgWrap').innerHTML = '<p style=\"color:#b00\">' + err.message + '</p>';"
           "});"
@@ -1553,10 +1773,17 @@ static String renderPage() {
           // clone is marked data-hit-proxy so saveCutEditor() can leave it
           // out of what actually gets written to the file.
           "function cutEditorInitShape(el) {"
-          "el.style.fill = 'none';"
+          // Check the real fill before overriding it below.
+          "if (cutEditorIsAnchor(el)) el.setAttribute('data-anchor', '1');"
+          "el.style.fill = (el.getAttribute('data-anchor') ? EDITOR_ANCHOR_COLOR : 'none');"
           "cutEditorRecolor(el);"
           "var hit = el.cloneNode(false);"
           "hit.setAttribute('data-hit-proxy', '1');"
+          // cloneNode copies data-anchor along with everything else, which
+          // would make every [data-anchor] query count the invisible proxy
+          // as a second anchor - and Shaper allows only one. The marker
+          // belongs to the real shape only.
+          "hit.removeAttribute('data-anchor');"
           "hit.style.fill = 'none';"
           "hit.style.stroke = 'transparent';"
           "hit.style.strokeWidth = '14';"
@@ -1571,22 +1798,24 @@ static String renderPage() {
           "function cutEditorCutTypeOf(el) {"
           "return el.getAttributeNS(EDITOR_SHAPER_NS, 'cutType') || '';"
           "}"
-          // Splits a written shaper:cutDepth/toolDia value like '0.125in'
-          // into its numeric and unit parts. Written WITHOUT a space
-          // between them (matching Shaper Studio's own export format,
-          // e.g. shaper:toolDia="0.125in" - a real-hardware comparison
-          // against a Shaper Studio export found this app had been
-          // writing "0.125 in" WITH a space instead, which is likely why
-          // saved cut types weren't taking effect on the Origin at all).
-          // Still tolerates an optional space so a file saved by an
-          // older build of this app (before this fix) still reads back
-          // correctly instead of silently losing its depth/tool diameter
-          // display.
+          // Splits a written shaper:cutDepth value like '9mm' into its
+          // numeric and unit parts. Written without a space between them,
+          // matching the format Shaper's own documented cut depth
+          // encoding uses. Still tolerates an optional space, so a file
+          // saved by an older build of this app - which wrote "9 mm" -
+          // reads back correctly instead of silently losing its depth.
           "function parseValueUnit(str) {"
           "var m = /^(-?[0-9.]+)\\s*([a-zA-Z]*)$/.exec(str || '');"
           "return m ? { val: m[1], unit: m[2] } : { val: '', unit: '' };"
           "}"
           "function cutEditorRecolor(el) {"
+          "if (el.getAttribute('data-anchor')) {"
+          "el.style.fill = EDITOR_ANCHOR_COLOR;"
+          "el.style.stroke = EDITOR_ANCHOR_COLOR;"
+          "el.style.strokeWidth = '2';"
+          "el.style.strokeDasharray = '';"
+          "return;"
+          "}"
           "var isSelected = cutEditorState.selected.indexOf(el) >= 0;"
           "if (isSelected) {"
           "el.style.stroke = EDITOR_SELECT_COLOR;"
@@ -1600,6 +1829,14 @@ static String renderPage() {
           "}"
           "}"
           "function cutEditorToggleSelect(el, additive) {"
+          // Refuse at the point of selection rather than at Apply: there is
+          // nothing you could usefully set on an anchor, so letting it into
+          // a selection would only create a way to damage the file.
+          "if (el.getAttribute('data-anchor')) {"
+          "document.getElementById('cutEditorStatus').textContent = "
+          "'That red shape is the file\\'s custom anchor - it tells the Origin where to place the design, so it has no cut type and can\\'t be given one.';"
+          "return;"
+          "}"
           "var idx = cutEditorState.selected.indexOf(el);"
           "if (!additive) {"
           "var wasOnlySelected = (idx >= 0 && cutEditorState.selected.length === 1);"
@@ -1615,6 +1852,50 @@ static String renderPage() {
           "cutEditorRecolor(el);"
           "updateSelectionSummary();"
           "}"
+          "function handleEditAnchorChange() {"
+          "var sel = document.getElementById('editAnchor');"
+          "var pos = sel.value;"
+          "var was = sel.dataset.current || '';"
+          "if (!cutEditorState.svgEl || pos === was) return;"
+          // Only a hand-made anchor is worth stopping for: it is geometry
+          // someone positioned deliberately and cannot be recovered here.
+          // Moving between standard positions is just moving a corner
+          // marker we put there ourselves, so it goes through silently.
+          "if (was === 'custom' && !confirm('This will remove the custom anchor in this design.')) {"
+          "updateAnchorInfo();"
+          "return;"
+          "}"
+          "if (!setAnchor(cutEditorState.svgEl, pos)) {"
+          "document.getElementById('cutEditorStatus').textContent = 'Could not work out where the drawing is, so no anchor was placed.';"
+          "updateAnchorInfo();"
+          "return;"
+          "}"
+          "var added = cutEditorState.svgEl.querySelector('[data-anchor]');"
+          "if (added) cutEditorInitShape(added);"
+          "cutEditorState.dirty = true;"
+          "updateAnchorInfo();"
+          "document.getElementById('cutEditorStatus').textContent = 'Anchor moved to ' + ANCHOR_LABELS[pos] + ' - click Save changes to write this to the file.';"
+          "}"
+          // The dropdown both reports and sets: it shows what the file
+          // currently has, so "Anchor: Top right" means that is already
+          // true, not that picking it would make it so.
+          "function updateAnchorInfo() {"
+          "var sel = document.getElementById('editAnchor');"
+          "if (!sel) return;"
+          "var cur = cutEditorState.svgEl ? detectAnchorPosition(cutEditorState.svgEl) : null;"
+          "var opts = [];"
+          // Only offered while it is the truth - once replaced, there is no
+          // going back to it, so it must not linger as a choosable option.
+          "if (cur === 'custom') opts.push('custom');"
+          "opts = opts.concat(['tl', 'tr', 'bl', 'br', 'c']);"
+          "var html = '';"
+          "for (var i = 0; i < opts.length; i++) {"
+          "var k = opts[i];"
+          "html += '<option value=\\'' + k + '\\'' + (k === cur ? ' selected' : '') + '>Anchor: ' + ANCHOR_LABELS[k] + '</option>';"
+          "}"
+          "sel.innerHTML = html;"
+          "sel.dataset.current = cur || '';"
+          "}"
           "function updateSelectionSummary() {"
           "var n = cutEditorState.selected.length;"
           "document.getElementById('cutEditorSelCount').textContent = n === 0 ? 'No line selected.' : (n + ' line(s) selected.');"
@@ -1622,55 +1903,20 @@ static String renderPage() {
           "if (applyBtn) applyBtn.disabled = (n === 0);"
           "if (n > 0) {"
           "var el = cutEditorState.selected[0];"
-          "document.getElementById('editCutType').value = cutEditorCutTypeOf(el);"
+          // A shape with nothing set yet gets On Line preselected rather
+          // than a blank "choose one". On Line is what the Origin treats
+          // an unmarked line as anyway - and it's what a plain converted
+          // file already encodes, since dxf2svg emits Shaper's On Line
+          // gray on every path - so this shows you what the shape
+          // already is instead of pretending it's undecided. Applying it
+          // then just makes that explicit. Anything with a real cut type
+          // still shows its own.
+          "document.getElementById('editCutType').value = cutEditorCutTypeOf(el) || 'online';"
           "var depth = el.getAttributeNS(EDITOR_SHAPER_NS, 'cutDepth') || '';"
           "var depthParsed = parseValueUnit(depth);"
           "document.getElementById('editDepth').value = depthParsed.val || '';"
           "if (depthParsed.unit) document.getElementById('editDepthUnit').value = depthParsed.unit;"
-          // Pre-fill the tool diameter preset (or the custom row) from
-          // this shape's existing shaper:toolDia, the same way depth
-          // just did above - this was missing entirely before, so
-          // reopening an already-edited shape always showed "choose
-          // one" for bit size even though the real value was saved and
-          // correct. Matched numerically (parseFloat), not by string,
-          // since a written value like "0.125in" needs to match a
-          // preset option written as value='0.125|in'.
-          "var toolDia = el.getAttributeNS(EDITOR_SHAPER_NS, 'toolDia') || '';"
-          "var toolDiaParsed = parseValueUnit(toolDia);"
-          "var toolDiaNum = toolDiaParsed.val !== '' ? parseFloat(toolDiaParsed.val) : NaN;"
-          "var toolDiaUnitVal = toolDiaParsed.unit || '';"
-          "var presetSel = document.getElementById('editToolDiaPreset');"
-          "var matchedPreset = '';"
-          "if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
-          "for (var pi = 0; pi < presetSel.options.length; pi++) {"
-          "var optVal = presetSel.options[pi].value;"
-          "if (optVal === '' || optVal === '__custom__') continue;"
-          "var optParts = optVal.split('|');"
-          "if (parseFloat(optParts[0]) === toolDiaNum && optParts[1] === toolDiaUnitVal) { matchedPreset = optVal; break; }"
           "}"
-          "}"
-          "if (matchedPreset) {"
-          "presetSel.value = matchedPreset;"
-          "} else if (!isNaN(toolDiaNum) && toolDiaUnitVal) {"
-          "presetSel.value = '__custom__';"
-          "document.getElementById('editToolDiaCustom').value = toolDiaParsed.val;"
-          "document.getElementById('editToolDiaUnit').value = toolDiaUnitVal;"
-          "} else {"
-          "presetSel.value = '';"
-          "document.getElementById('editToolDiaCustom').value = '';"
-          "}"
-          "handleEditToolDiaPresetChange();"
-          "toggleEditToolDiaWrap();"
-          "}"
-          "}"
-          "function toggleEditToolDiaWrap() {"
-          "var ct = document.getElementById('editCutType').value;"
-          "var needsOffset = (ct === 'outside' || ct === 'inside' || ct === 'pocket');"
-          "document.getElementById('editToolDiaWrap').style.display = needsOffset ? '' : 'none';"
-          "}"
-          "function handleEditToolDiaPresetChange() {"
-          "var isCustom = document.getElementById('editToolDiaPreset').value === '__custom__';"
-          "document.getElementById('editToolDiaCustomWrap').style.display = isCustom ? '' : 'none';"
           "}"
           "function applyToSelectedShapes() {"
           "var cutType = document.getElementById('editCutType').value;"
@@ -1678,26 +1924,8 @@ static String renderPage() {
           "if (cutEditorState.selected.length === 0) { alert('Select at least one line first.'); return; }"
           "var depthVal = document.getElementById('editDepth').value;"
           "var depthUnit = document.getElementById('editDepthUnit').value;"
-          "var needsOffset = (cutType === 'outside' || cutType === 'inside' || cutType === 'pocket');"
-          "var toolDiaVal = '', toolDiaUnit = 'mm';"
-          "if (needsOffset) {"
-          "var preset = document.getElementById('editToolDiaPreset').value;"
-          "if (preset === '__custom__') {"
-          "toolDiaVal = document.getElementById('editToolDiaCustom').value;"
-          "toolDiaUnit = document.getElementById('editToolDiaUnit').value;"
-          "} else if (preset) {"
-          "var presetParts = preset.split('|');"
-          "toolDiaVal = presetParts[0];"
-          "toolDiaUnit = presetParts[1];"
-          "}"
-          "if (!toolDiaVal || isNaN(parseFloat(toolDiaVal))) {"
-          "alert('Outside/Inside/Pocket cuts need a tool diameter.');"
-          "return;"
-          "}"
-          "}"
           "var depthAttr = null;"
           "if (depthVal !== '' && !isNaN(parseFloat(depthVal))) depthAttr = parseFloat(depthVal) + depthUnit;"
-          "var toolDiaAttr = needsOffset ? (parseFloat(toolDiaVal) + toolDiaUnit) : null;"
           "var sel = cutEditorState.selected.slice();"
           "for (var i = 0; i < sel.length; i++) {"
           "var el = sel[i];"
@@ -1705,13 +1933,11 @@ static String renderPage() {
           // The part the Origin actually reads - see applyShaperCutColors.
           "applyShaperCutColors(el, cutType);"
           "if (depthAttr) el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutDepth', depthAttr);"
-          "if (toolDiaAttr) {"
-          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:toolDia', toolDiaAttr);"
-          "el.setAttributeNS(EDITOR_SHAPER_NS, 'shaper:cutOffset', '0' + toolDiaUnit);"
-          "} else {"
+          // Clear any tool diameter left on the shape by an older build,
+          // so re-saving a file cleans it out rather than preserving a
+          // field this app no longer writes or reads.
           "el.removeAttributeNS(EDITOR_SHAPER_NS, 'toolDia');"
           "el.removeAttributeNS(EDITOR_SHAPER_NS, 'cutOffset');"
-          "}"
           "}"
           "cutEditorState.selected = [];"
           "for (var j = 0; j < sel.length; j++) cutEditorRecolor(sel[j]);"
@@ -1747,6 +1973,9 @@ static String renderPage() {
           "cloneEl.removeAttribute('style');"
           "var styledEls = cloneEl.querySelectorAll('[style]');"
           "for (var s = 0; s < styledEls.length; s++) styledEls[s].removeAttribute('style');"
+          // data-anchor is ours, for preview and protection only - it has
+          // no meaning to Shaper and must not end up in the saved file.
+          "stripAnchorMarks(cloneEl);"
           "var svgText = new XMLSerializer().serializeToString(cloneEl);"
           "var fd = new FormData();"
           "fd.append('file', new Blob([svgText], {type: 'image/svg+xml'}), cutEditorState.name);"
@@ -1774,23 +2003,7 @@ static String renderPage() {
           "var cutType = document.getElementById('cutType').value;"
           "var cutDepthVal = document.getElementById('cutDepth').value;"
           "var cutDepthUnit = document.getElementById('cutDepthUnit').value;"
-          "var toolDiaPresetVal = document.getElementById('toolDiaPreset').value;"
-          "var toolDiaVal, toolDiaUnit;"
-          "if (toolDiaPresetVal === '__custom__') {"
-          "toolDiaVal = document.getElementById('toolDiaCustom').value;"
-          "toolDiaUnit = document.getElementById('toolDiaUnit').value;"
-          "} else if (toolDiaPresetVal) {"
-          "var toolDiaParts = toolDiaPresetVal.split('|');"
-          "toolDiaVal = toolDiaParts[0];"
-          "toolDiaUnit = toolDiaParts[1];"
-          "} else {"
-          "toolDiaVal = '';"
-          "toolDiaUnit = 'mm';"
-          "}"
-          // Pass 1: convert every selected DXF client-side first (SVGs pass
-          // through untouched). This means we know every output filename
-          // before asking about overwrites, so the user gets one prompt
-          // covering the whole batch instead of one popup per file.
+          "var anchorPos = document.getElementById('uploadAnchor').value;"
           "status.textContent = 'Preparing ' + files.length + ' file(s)...';"
           "var jobs = [];"
           "for (var i = 0; i < files.length; i++) {"
@@ -1805,15 +2018,18 @@ static String renderPage() {
           "if (skippedParts.length) msg += ', skipped ' + skippedParts.join(', ');"
           "var svgName = f.name.replace(/\\.dxf$/i, '') + '.svg';"
           "var svgOut = result.svg;"
-          "if (cutType || cutDepthVal) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
+          "if (cutType || cutDepthVal || anchorPos) svgOut = applyShaperMetadata(svgOut, cutType, cutDepthVal, cutDepthUnit, anchorPos);"
           "jobs.push({name: f.name, svgName: svgName, blob: new Blob([svgOut], {type: 'image/svg+xml'}), msg: msg});"
           "} else {"
-          "if (cutType || cutDepthVal) {"
           "var svgText = await f.text();"
-          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit, toolDiaVal, toolDiaUnit);"
-          "jobs.push({name: f.name, svgName: f.name, blob: new Blob([svgText], {type: 'image/svg+xml'})});"
-          "} else {"
+          // Nothing chosen AND the file brought its own anchor: there is
+          // nothing to add, so send the user's bytes exactly as they are
+          // rather than round-tripping them through a parser for no reason.
+          "if (!cutType && !cutDepthVal && !anchorPos && svgHasOwnAnchor(svgText)) {"
           "jobs.push({name: f.name, svgName: f.name, blob: f});"
+          "} else {"
+          "svgText = applyShaperMetadata(svgText, cutType, cutDepthVal, cutDepthUnit, anchorPos);"
+          "jobs.push({name: f.name, svgName: f.name, blob: new Blob([svgText], {type: 'image/svg+xml'})});"
           "}"
           "}"
           "} catch (err) {"
@@ -2146,11 +2362,33 @@ static void handleRename() {
         failed.push_back(from + " (no longer there)");
       } else if (FFat.exists(toPath)) {
         failed.push_back(from + " (" + to + " already exists)");
-      } else if (FFat.rename(fromPath, toPath)) {
-        renamed.push_back(from + " -> " + to);
-        claimed.push_back(to);
       } else {
-        failed.push_back(from);
+        // FFat.rename() doesn't carry the file's timestamp to the new
+        // directory entry, so a renamed file came back with a date before
+        // formatDateTime()'s sanity cutoff and showed as "-" in the
+        // Uploaded column - as though it had been uploaded before the
+        // clock was ever set. Read the old time first, put it back after.
+        time_t keepTime = 0;
+        File src = FFat.open(fromPath, FILE_READ);
+        if (src) {
+          keepTime = src.getLastWrite();
+          src.close();
+        }
+        if (FFat.rename(fromPath, toPath)) {
+          if (keepTime > 0) {
+            // FFat mounts at /ffat, so the POSIX path the VFS knows this
+            // file by is that prefix plus the path FFat itself takes.
+            String vfsPath = String("/ffat") + toPath;
+            struct utimbuf times;
+            times.actime = keepTime;
+            times.modtime = keepTime;
+            utime(vfsPath.c_str(), &times);
+          }
+          renamed.push_back(from + " -> " + to);
+          claimed.push_back(to);
+        } else {
+          failed.push_back(from);
+        }
       }
     }
     storageEndAppAccess(true);
@@ -2451,15 +2689,23 @@ static void handleGetSvg() {
     server.send(404, "text/plain", "Not found");
     return;
   }
-  size_t sz = f.size();
-  char *buf = new char[sz + 1];
-  size_t n = f.read((uint8_t *)buf, sz);
-  buf[n] = '\0';
-  String content(buf);
-  delete[] buf;
+  // Streamed in fixed-size pieces rather than read whole. This used to
+  // allocate the entire file, copy it into a String, and hand that to
+  // send() - which copies it again. Three copies of the file resident at
+  // once, on a device that has just built a page String of its own, and
+  // Arduino builds with exceptions off, so a failed `new` returns null and
+  // the next line writes through it: a reboot, not an error. Peak use is
+  // now one 1KB buffer no matter how big the file is.
+  server.setContentLength(f.size());
+  server.send(200, "image/svg+xml", "");
+  uint8_t chunk[1024];
+  while (true) {
+    size_t n = f.read(chunk, sizeof(chunk));
+    if (n == 0) break;
+    server.sendContent((const char *)chunk, n);
+  }
   f.close();
   storageEndAppAccess(false); // just reading, nothing changed - no need to nudge the host
-  server.send(200, "image/svg+xml", content);
 }
 
 static void handleNotFound() {

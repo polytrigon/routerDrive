@@ -25,7 +25,14 @@ void ledInit() {
   prefs.begin(PREFS_NAMESPACE, true /* read-only */);
   ledEnabled = prefs.getBool("ledon", true);
   prefs.end();
-  ledWrite(false);
+  // Light up straight away rather than sitting dark until setup() finishes.
+  // Boot can take a while - mounting flash, then up to
+  // WIFI_CONNECT_TIMEOUT_MS joining Wi-Fi - and an unlit LED through all of
+  // it reads as "the flash failed" exactly when you're least sure it
+  // didn't. LED_BLINK_FAST already means "busy", which is what booting is,
+  // so there's no new pattern to learn; ledApplyIdleState() resolves it to
+  // slow-blink or solid once Wi-Fi settles.
+  ledSet(LED_BLINK_FAST);
 }
 
 void ledSet(LedMode mode) {
@@ -48,6 +55,19 @@ void ledSet(LedMode mode) {
 
 void ledApplyIdleState() {
   ledSet(wifiPortalState() == WIFI_STATE_AP ? LED_BLINK_SLOW : LED_ON);
+}
+
+// delay() that keeps the blink moving. Needed because ledLoop() is
+// normally only reached from loop(), which doesn't run until setup()
+// returns - so during boot the pattern set above would freeze on whichever
+// half-cycle it started on. Anywhere setup() blocks for long enough to
+// notice should wait through this instead of plain delay().
+void ledDelay(uint32_t ms) {
+  uint32_t start = millis();
+  while (millis() - start < ms) {
+    ledLoop();
+    delay(10);
+  }
 }
 
 void ledLoop() {
