@@ -33,6 +33,29 @@ void wifiPortalSaveCredentials(const String &ssid, const String &password);
 // Wipe saved credentials and reboot into AP/setup mode.
 void wifiPortalResetCredentials();
 
+// Optional static IP configuration, layered alongside Wi-Fi credentials -
+// see config.h's "Static IP fallback" section for the full precedence
+// rules (web-UI-saved value, then config.h's compile-time fallback, then
+// plain DHCP). Applied on every connect attempt (initial boot and
+// background retries) - see connectSTA() in wifi_portal.cpp.
+
+// Save a static IP config, then reboot into STA mode to try it. subnet/dns
+// may be empty (see wifi_portal.cpp for the defaults applied - 255.255.255.0
+// for subnet, the gateway itself for DNS). Caller is responsible for
+// validating ip/gateway/subnet/dns are parseable IPv4 addresses first (see
+// web_server.cpp's handler) - this just stores whatever it's given.
+void wifiPortalSaveStaticIP(const String &ip, const String &gateway, const String &subnet, const String &dns);
+
+// Clear any saved static IP config and switch to real DHCP, then reboot.
+// Explicit - overrides config.h's fallback too, unlike simply never having
+// saved a static IP in the first place.
+void wifiPortalClearStaticIP();
+
+// Human-readable summary of the current addressing mode for the web UI,
+// e.g. "Static: 192.168.1.50", "Static: 192.168.1.50 (from config.h
+// fallback)", or "Automatic (DHCP)".
+String wifiPortalStaticIPStatusText();
+
 // Human-readable status for the web UI (e.g. "Connected to HomeNet (STA) -
 // http://routerdrive.local/" or "Setup mode - join Wi-Fi 'RouterDrive-Setup'").
 String wifiPortalStatusText();

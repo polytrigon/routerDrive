@@ -32,6 +32,30 @@ static const uint32_t USB_WIFI_STARTUP_SETTLE_MS = 500;
 // Namespace used in NVS (via Preferences) to store Wi-Fi credentials.
 static const char *PREFS_NAMESPACE = "routerdrive";
 
+// ---- Static IP fallback (optional) -----------------------------------------
+//
+// Normally, set a static IP from the web UI once RouterDrive is already
+// reachable (Wi-Fi section -> Change network -> Set static IP (advanced)) -
+// no reflash needed, and it's saved the same way as your Wi-Fi credentials.
+// Worth doing if your network's DHCP server doesn't keep giving this device
+// the same address, since relying on <HOSTNAME>.local instead means
+// depending on mDNS resolution working (not all clients support it, and it
+// doesn't cross subnets/VLANs).
+//
+// These constants below are a fallback for the rare case where you can't
+// get that far over the web UI - e.g. the initial setup Access Point isn't
+// reachable on whatever device you have handy - so you can bake in a
+// default before ever flashing instead. Only takes effect when nothing has
+// been saved from the web UI yet; a static IP saved there always wins, and
+// explicitly choosing "Use DHCP instead" there always means real DHCP,
+// ignoring this fallback entirely. Leave USE_STATIC_IP_FALLBACK false (the
+// default) unless you're using this.
+static const bool USE_STATIC_IP_FALLBACK = false;
+static const char *STATIC_IP_FALLBACK = "192.168.1.50";
+static const char *STATIC_GATEWAY_FALLBACK = "192.168.1.1";
+static const char *STATIC_SUBNET_FALLBACK = "255.255.255.0";
+static const char *STATIC_DNS_FALLBACK = ""; // blank = same as gateway
+
 // Hold the BOOT button (GPIO0) down through power-on for this long to wipe
 // saved Wi-Fi credentials and force the setup Access Point on this boot.
 static const uint32_t BOOT_RESET_HOLD_MS = 3000;

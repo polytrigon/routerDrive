@@ -268,6 +268,36 @@ broadcasting `RouterDrive-Setup`:
   need to open the case up. Either way the **Forget Wi-Fi** button on
   the RouterDrive page does the same job without touching the hardware.
 
+## Setting a static IP
+
+By default RouterDrive gets its address automatically (DHCP), same as any
+other device on your network, and `routerdrive.local` is normally the
+easiest way to reach it. If your network's DHCP server doesn't keep
+handing this device the same address, though, you can pin one down
+instead - useful in a shop/office setting where you want a fixed address
+you can bookmark or hand out to your team, or if `.local` addresses don't
+resolve reliably on your network (not every device supports it, and it
+doesn't cross separate subnets/VLANs).
+
+![Set static IP (advanced), expanded on the RouterDrive page](../assets/setStaticIP.png)
+
+From the RouterDrive page, once you're connected, open **Set static IP
+(advanced)** - it sits just below **Change network**, in its own
+collapsed section. Fill in the IP address and gateway your
+network actually uses (ask whoever manages it if you're not sure) -
+subnet mask defaults to `255.255.255.0` and DNS defaults to your gateway
+if you leave them blank. **Save & reconnect** restarts the device with
+that address. **Use DHCP instead**, in the same section, switches back to
+automatic addressing at any time.
+
+Getting the address wrong (outside your actual network's range, or a
+duplicate of something else on it) can make RouterDrive unreachable over
+Wi-Fi even though it looks like it "connected" - unlike a wrong Wi-Fi
+password, a bad static IP doesn't automatically fall back to setup mode.
+If that happens, use the same **B**/**R** button reset described above
+("Making it forget your Wi-Fi") - it clears the static IP along with your
+saved Wi-Fi network, back to a clean slate.
+
 ## Status LED
 
 A small light on the board tells you the device's state at a glance:

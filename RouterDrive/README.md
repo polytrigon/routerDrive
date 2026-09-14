@@ -300,6 +300,37 @@ switched the radio out of AP mode and nothing brought the AP back up when
 that attempt failed - fixed by keeping the AP and STA radios up
 simultaneously during retries instead of switching between them.)
 
+## Static IP
+
+RouterDrive uses DHCP by default. For networks whose DHCP server doesn't
+keep handing out the same lease (so `<HOSTNAME>.local` is the only way to
+find it, and mDNS resolution isn't universal/doesn't cross subnets), a
+static IP can be set from the web UI: Wi-Fi section -> "Set static IP
+(advanced)" (its own `<details>`, a sibling of "Change network" rather
+than nested inside it). Saved via `Preferences` alongside the Wi-Fi
+credentials (`ipmode`/`ip`/`gw`/`sn`/`dns` keys, same `PREFS_NAMESPACE`),
+applied via `WiFi.config()` in `connectSTA()` (`wifi_portal.cpp`) right
+before `WiFi.begin()`, on both the initial boot connect and the
+background AP-mode retry. Subnet defaults to `255.255.255.0` and DNS to
+the gateway if left blank; both client- and server-side validate every
+field is a parseable IPv4 address before saving.
+
+A bad static IP (wrong range, duplicate address) can leave the device
+associated to Wi-Fi (`WiFi.status() == WL_CONNECTED`) but genuinely
+unreachable, since that status only reflects link-layer association, not
+IP-layer reachability - so the existing bad-password retry/fallback logic
+above doesn't catch this case. No active verification (e.g. pinging the
+gateway) is implemented to keep this dependency-free; recovery is the
+same BOOT-button reset as a bad password, which also clears the static IP
+config (it's part of the same `Preferences` wipe).
+
+`config.h`'s `USE_STATIC_IP_FALLBACK` (default `false`) is a compile-time
+fallback for bootstrapping when the web UI itself isn't reachable to set
+one - it only applies when nothing's been saved from the web UI yet.
+Explicitly choosing "Use DHCP instead" in the web UI writes `ipmode=dhcp`,
+which overrides the fallback too (otherwise clearing a saved static IP
+would just fall through to the config.h default instead of real DHCP).
+
 ## Connection status
 
 The top of the web UI shows two live indicators:

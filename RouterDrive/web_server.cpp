@@ -941,13 +941,61 @@ static String renderLedToggle() {
 
 // Shared by the normal page's Wi-Fi section and the streamlined captive-
 // window page below, so the two forms can't drift out of sync.
-static String renderWifiCredentialsForm(const String &submitLabel) {
+// includeButton/formId let callers that need the submit button placed
+// elsewhere (e.g. lined up with a second form's button via the form=
+// attribute trick, same pattern as the folder Move panel's #moveDest)
+// render the form without one, instead of every caller getting a button
+// baked in right where the fields end.
+static String renderWifiCredentialsForm(const String &submitLabel, bool includeButton = true, const String &formId = "") {
   String html;
-  html += "<form method='POST' action='/wifi'>";
+  html += "<form method='POST' action='/wifi'";
+  if (formId.length() > 0) {
+    html += " id='" + formId + "'";
+  }
+  html += ">";
   html += "<label>Network name (SSID)<br><input name='ssid' required></label><br><br>";
   html += "<label>Password<br><input name='password' type='password'></label><br><br>";
-  html += "<button type='submit'>" + submitLabel + "</button>";
+  if (includeButton) {
+    html += "<button type='submit'>" + submitLabel + "</button>";
+  }
   html += "</form>";
+  return html;
+}
+
+// A sibling of "Change network" now, not nested inside it - its own
+// <details> for optional static IP, for networks whose DHCP server
+// doesn't keep giving this device the same address (relying on
+// <HOSTNAME>.local instead means depending on mDNS resolution, which isn't
+// universal and doesn't cross subnets/VLANs). Kept collapsed by default
+// rather than always-visible fields, since almost everyone should leave
+// this alone and just use DHCP. See config.h's "Static IP fallback" section
+// for the compile-time-fallback escape hatch if the web UI itself isn't
+// reachable to begin with.
+static String renderStaticIPSection() {
+  String html;
+  html += "<details><summary>Set static IP (advanced)</summary><br>";
+  html += "<p class='sub'>Currently: " + htmlEscape(wifiPortalStaticIPStatusText()) + "</p>";
+  html += "<p class='sub'>Only needed if your network's DHCP server doesn't keep giving this device the same "
+          "address - leave this alone otherwise. Getting it wrong can make RouterDrive unreachable over Wi-Fi; "
+          "if that happens, hold the BOOT button during a power cycle to wipe Wi-Fi settings (including this) "
+          "and get back into setup mode.</p>";
+  html += "<form method='POST' action='/static-ip' id='staticIpForm'>";
+  html += "<label>IP address<br><input name='ip' placeholder='192.168.1.50' required></label><br><br>";
+  html += "<label>Gateway<br><input name='gateway' placeholder='192.168.1.1' required></label><br><br>";
+  html += "<label>Subnet mask<br><input name='subnet' placeholder='255.255.255.0'></label><br><br>";
+  html += "<label>DNS server<br><input name='dns' placeholder='defaults to gateway'></label><br><br>";
+  html += "</form>";
+  // Empty on purpose - its button lives in the .file-actions row below,
+  // associated via form='staticIpResetForm' (same pattern used for the
+  // folder feature's move-destination control, outside its own <form>).
+  html += "<form method='POST' id='staticIpResetForm' action='/static-ip-reset' "
+          "onsubmit=\"return confirm('Switch back to automatic (DHCP) addressing and restart?')\" "
+          "style='display:none'></form>";
+  html += "<div class='file-actions'>";
+  html += "<button type='submit' form='staticIpForm'>Save &amp; reconnect</button>";
+  html += "<button type='submit' form='staticIpResetForm'>Use DHCP instead</button>";
+  html += "</div>";
+  html += "</details>";
   return html;
 }
 
@@ -958,11 +1006,22 @@ static String renderWifiSection() {
     html += renderWifiCredentialsForm("Save &amp; connect");
   } else {
     html += "<h2>Wi-Fi</h2><p>" + htmlEscape(wifiPortalStatusText()) + "</p>";
-    html += "<details><summary>Change network</summary>";
-    html += renderWifiCredentialsForm("Save &amp; reconnect");
-    html += "<form method='POST' action='/wifi-reset' onsubmit=\"return confirm('Forget saved Wi-Fi and restart into setup mode?')\">";
-    html += "<button type='submit'>Forget Wi-Fi</button></form>";
+    html += "<details><summary>Change network</summary><br>";
+    html += renderWifiCredentialsForm("Save &amp; reconnect", false, "wifiChangeForm");
+    // Empty on purpose - see the matching comment in renderStaticIPSection().
+    html += "<form method='POST' id='wifiResetForm' action='/wifi-reset' "
+            "onsubmit=\"return confirm('Forget saved Wi-Fi and restart into setup mode?')\" "
+            "style='display:none'></form>";
+    html += "<div class='file-actions'>";
+    html += "<button type='submit' form='wifiChangeForm'>Save &amp; reconnect</button>";
+    html += "<button type='submit' form='wifiResetForm'>Forget Wi-Fi</button>";
+    html += "</div>";
+    // Inside the <details>, not after it, so this space only shows up while
+    // the panel is actually expanded - gives room above the "Set static IP"
+    // summary that follows once it closes.
+    html += "<br>";
     html += "</details>";
+    html += renderStaticIPSection(); // sibling of "Change network", not nested inside it
   }
   return html;
 }
@@ -2635,6 +2694,54 @@ static void handleWifiReset() {
   wifiPortalResetCredentials(); // reboots
 }
 
+static bool isValidIPv4(const String &s) {
+  if (s.length() == 0) {
+    return false;
+  }
+  IPAddress ip;
+  return ip.fromString(s);
+}
+
+static void handleStaticIPSave() {
+  String ip = server.arg("ip");
+  String gateway = server.arg("gateway");
+  String subnet = server.arg("subnet");
+  String dns = server.arg("dns");
+  ip.trim();
+  gateway.trim();
+  subnet.trim();
+  dns.trim();
+
+  if (subnet.length() == 0) {
+    subnet = "255.255.255.0";
+  }
+  if (dns.length() == 0) {
+    dns = gateway;
+  }
+
+  if (!isValidIPv4(ip) || !isValidIPv4(gateway) || !isValidIPv4(subnet) || !isValidIPv4(dns)) {
+    flashMessage = "Static IP not saved - check that every field is a valid IP address (e.g. 192.168.1.50).";
+    flashIsError = true;
+    server.sendHeader("Location", "/");
+    server.send(303);
+    return;
+  }
+
+  server.send(200, "text/html",
+              "<html><body><p>Saved. Restarting with static IP " + htmlEscape(ip) +
+              "...</p><p>If this address turns out to be unreachable on your network, hold the BOOT button "
+              "during a power cycle to wipe Wi-Fi settings (including this) and get back into setup mode.</p>"
+              "</body></html>");
+  delay(200);
+  wifiPortalSaveStaticIP(ip, gateway, subnet, dns); // reboots
+}
+
+static void handleStaticIPReset() {
+  server.send(200, "text/html", "<html><body><p>Switched back to automatic (DHCP) addressing. Restarting...</p></body></html>");
+  delay(200);
+  wifiPortalClearStaticIP(); // reboots
+}
+
 static void handleScan() {
   int n = WiFi.scanNetworks();
   String json = "[";
@@ -2731,6 +2838,8 @@ void webServerInit() {
   server.on("/svg", HTTP_GET, handleGetSvg);
   server.on("/wifi", HTTP_POST, handleWifiSave);
   server.on("/wifi-reset", HTTP_POST, handleWifiReset);
+  server.on("/static-ip", HTTP_POST, handleStaticIPSave);
+  server.on("/static-ip-reset", HTTP_POST, handleStaticIPReset);
   server.on("/scan", HTTP_GET, handleScan);
   server.onNotFound(handleNotFound);
   server.begin();

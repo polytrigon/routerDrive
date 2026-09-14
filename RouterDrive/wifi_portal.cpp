@@ -23,6 +23,52 @@ static bool loadCredentials(String &ssid, String &pass) {
   return ssid.length() > 0;
 }
 
+// A static IP explicitly saved via the web UI - separate from the
+// config.h compile-time fallback, so callers (resolveStaticIP() below,
+// and the web UI's status text) can tell the two apart.
+static bool loadSavedStaticIP(String &ip, String &gateway, String &subnet, String &dns) {
+  prefs.begin(PREFS_NAMESPACE, true /* read-only */);
+  String mode = prefs.getString("ipmode", "");
+  ip = prefs.getString("ip", "");
+  gateway = prefs.getString("gw", "");
+  subnet = prefs.getString("sn", "");
+  dns = prefs.getString("dns", "");
+  prefs.end();
+  return mode == "static" && ip.length() > 0;
+}
+
+// True only if the web UI's "Use DHCP instead" was explicitly clicked -
+// distinct from simply never having saved a static IP, so an explicit
+// choice here always wins over config.h's USE_STATIC_IP_FALLBACK.
+static bool explicitlyWantsDHCP() {
+  prefs.begin(PREFS_NAMESPACE, true /* read-only */);
+  String mode = prefs.getString("ipmode", "");
+  prefs.end();
+  return mode == "dhcp";
+}
+
+// Resolves the static IP actually in effect, if any: a web-UI-saved value
+// takes priority; otherwise config.h's USE_STATIC_IP_FALLBACK (unless the
+// web UI explicitly chose DHCP instead); otherwise none (plain DHCP).
+// Returns false for plain DHCP. fromFallback, if given, reports which
+// source won - purely for the web UI's status text, doesn't affect
+// behavior.
+static bool resolveStaticIP(String &ip, String &gateway, String &subnet, String &dns, bool *fromFallback = nullptr) {
+  if (loadSavedStaticIP(ip, gateway, subnet, dns)) {
+    if (fromFallback) *fromFallback = false;
+    return true;
+  }
+  if (!explicitlyWantsDHCP() && USE_STATIC_IP_FALLBACK) {
+    ip = STATIC_IP_FALLBACK;
+    gateway = STATIC_GATEWAY_FALLBACK;
+    subnet = STATIC_SUBNET_FALLBACK;
+    dns = STATIC_DNS_FALLBACK;
+    if (fromFallback) *fromFallback = true;
+    return true;
+  }
+  return false;
+}
+
 static void startAP() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(PORTAL_SSID, PORTAL_PASSWORD);
@@ -55,6 +101,24 @@ static bool connectSTA(const String &ssid, const String &pass, bool keepAPAlive 
   // saved network - see the comment above that call for why.
   WiFi.mode(keepAPAlive ? WIFI_AP_STA : WIFI_STA);
   WiFi.setHostname(HOSTNAME);
+
+  // Static IP, if one's configured (web-UI-saved, or config.h's fallback -
+  // see resolveStaticIP()) - must happen after WiFi.mode() and before
+  // WiFi.begin(), or the interface config doesn't stick.
+  String ip, gateway, subnet, dns;
+  if (resolveStaticIP(ip, gateway, subnet, dns)) {
+    IPAddress ipAddr, gwAddr, snAddr, dnsAddr;
+    ipAddr.fromString(ip);
+    gwAddr.fromString(gateway);
+    snAddr.fromString(subnet.length() > 0 ? subnet : "255.255.255.0");
+    dnsAddr.fromString(dns.length() > 0 ? dns : gateway);
+    if (WiFi.config(ipAddr, gwAddr, snAddr, dnsAddr)) {
+      Serial.printf("[wifi] using static IP %s\n", ip.c_str());
+    } else {
+      Serial.println("[wifi] WiFi.config() for static IP failed - falling back to DHCP");
+    }
+  }
+
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   uint32_t start = millis();
@@ -197,4 +261,39 @@ String wifiPortalStatusText() {
 
 int wifiPortalRSSI() {
   return WiFi.RSSI();
+}
+
+void wifiPortalSaveStaticIP(const String &ip, const String &gateway, const String &subnet, const String &dns) {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putString("ipmode", "static");
+  prefs.putString("ip", ip);
+  prefs.putString("gw", gateway);
+  prefs.putString("sn", subnet);
+  prefs.putString("dns", dns);
+  prefs.end();
+  Serial.println("[wifi] static IP saved, rebooting...");
+  delay(500);
+  ESP.restart();
+}
+
+void wifiPortalClearStaticIP() {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putString("ipmode", "dhcp"); // explicit - overrides config.h's fallback too
+  prefs.remove("ip");
+  prefs.remove("gw");
+  prefs.remove("sn");
+  prefs.remove("dns");
+  prefs.end();
+  Serial.println("[wifi] static IP cleared, back to DHCP, rebooting...");
+  delay(300);
+  ESP.restart();
+}
+
+String wifiPortalStaticIPStatusText() {
+  String ip, gateway, subnet, dns;
+  bool fromFallback = false;
+  if (resolveStaticIP(ip, gateway, subnet, dns, &fromFallback)) {
+    return fromFallback ? ("Static: " + ip + " (from config.h fallback)") : ("Static: " + ip);
+  }
+  return "Automatic (DHCP)";
 }
